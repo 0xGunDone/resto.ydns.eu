@@ -1,0 +1,152 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
+    color-scheme: light dark;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100;
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+
+  #root {
+    width: 100%;
+    min-height: 100vh;
+  }
+
+  /* Авто-коррекция часто используемых текстовых цветов в тёмной теме */
+  .dark .text-gray-900 { color: #f3f4f6 !important; }
+  .dark .text-gray-800 { color: #e5e7eb !important; }
+  .dark .text-gray-700 { color: #d1d5db !important; }
+  .dark .text-gray-600 { color: #9ca3af !important; }
+  .dark .text-gray-500 { color: #9ca3af !important; }
+
+  /* Базовые подложки/бордеры для тёмной темы */
+  .dark .bg-white { background-color: #0f172a !important; }
+  .dark .bg-gray-50 { background-color: #111827 !important; }
+  .dark .bg-gray-100 { background-color: #1f2937 !important; }
+  .dark .bg-gray-200 { background-color: #374151 !important; }
+  .dark .border-gray-200 { border-color: #374151 !important; }
+  .dark .border-gray-300 { border-color: #4b5563 !important; }
+  .dark .divide-gray-200 { border-color: #1f2937 !important; }
+
+  /* Частые hover-состояния */
+  .dark .hover\:bg-gray-50:hover { background-color: #1f2937 !important; }
+  .dark .hover\:bg-gray-100:hover { background-color: #252f3f !important; }
+  .dark .hover\:bg-gray-200:hover { background-color: #374151 !important; }
+}
+
+@layer components {
+  .card {
+    @apply bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow duration-200;
+  }
+
+  .btn-primary {
+    @apply bg-gradient-to-r from-primary-600 to-primary-700 text-white px-4 py-2 rounded-lg font-medium hover:from-primary-700 hover:to-primary-800 transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed;
+    /* Улучшение для мобильных: минимальный размер touch target 44x44px */
+    @apply min-h-[44px] min-w-[44px] touch-manipulation;
+  }
+
+  .btn-secondary {
+    @apply bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 px-4 py-2 rounded-lg font-medium border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all duration-200;
+    @apply min-h-[44px] min-w-[44px] touch-manipulation;
+  }
+
+  .input {
+    @apply w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 text-sm;
+    @apply bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100;
+    /* Улучшение для мобильных: больший размер текста и отступы */
+    @apply text-base sm:text-sm min-h-[44px];
+  }
+
+  .select {
+    @apply w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 text-sm;
+    @apply bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100;
+    @apply min-h-[44px];
+  }
+}
+
+/* Мобильные оптимизации */
+@layer utilities {
+  /* Улучшение touch targets */
+  .touch-target {
+    @apply min-h-[44px] min-w-[44px];
+    touch-action: manipulation;
+  }
+
+  /* Предотвращение выделения текста при тапе на мобильных */
+  .no-select {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Плавающая кнопка действий (FAB) */
+  .fab {
+    @apply fixed bottom-6 right-6 z-50 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-full p-4 shadow-lg hover:shadow-xl transition-all duration-200;
+    @apply min-h-[56px] min-w-[56px] flex items-center justify-center;
+    touch-action: manipulation;
+  }
+
+  /* Безопасная зона для мобильных устройств (notch, home indicator) */
+  .safe-area-inset-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .safe-area-inset-top {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+/* Анимации для FAB */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out forwards;
+}
+
+/* Улучшение прокрутки на мобильных */
+@media (max-width: 640px) {
+  * {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Увеличенные отступы для мобильных */
+  body {
+    font-size: 16px; /* Предотвращает авто-зум на iOS при фокусе на input */
+  }
+
+  /* Улучшение читаемости на маленьких экранах */
+  .card {
+    @apply p-4 sm:p-6;
+  }
+
+  /* Увеличенные отступы между элементами на мобильных */
+  .mobile-spacing > * + * {
+    @apply mt-4;
+  }
+}
+

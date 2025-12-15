@@ -1,0 +1,49 @@
+{
+  "name": "Resto Management",
+  "short_name": "Resto",
+  "description": "Онлайн сервис для управления ресторанами",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "shortcuts": [
+    {
+      "name": "График работы",
+      "short_name": "График",
+      "description": "Открыть график работы",
+      "url": "/schedule",
+      "icons": [{ "src": "/icon-192x192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Задачи",
+      "short_name": "Задачи",
+      "description": "Открыть задачи",
+      "url": "/tasks",
+      "icons": [{ "src": "/icon-192x192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Табели",
+      "short_name": "Табели",
+      "description": "Открыть табели",
+      "url": "/timesheets",
+      "icons": [{ "src": "/icon-192x192.png", "sizes": "192x192" }]
+    }
+  ]
+}
+

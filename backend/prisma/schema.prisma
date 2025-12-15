@@ -1,0 +1,511 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                       String                @id @default(cuid())
+  email                    String                @unique
+  passwordHash             String
+  firstName                String
+  lastName                 String
+  phone                    String?
+  telegramId               String?               @unique // Telegram ID пользователя
+  role                     String                @default("EMPLOYEE")
+  twoFactorEnabled         Boolean               @default(false)
+  twoFactorSecret          String?
+  isActive                 Boolean               @default(true)
+  createdAt                DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
+  actionLogs               ActionLog[]
+  feedback                 Feedback[]
+  managedRestaurants       Restaurant[]          @relation("RestaurantManager")
+  restaurants              RestaurantUser[]
+  shifts                   Shift[]
+  tasks                    Task[]                @relation("TaskAssignee")
+  createdTasks             Task[]                @relation("TaskCreator")
+  timesheets               Timesheet[]
+  inviteLinks              InviteLink[]
+  createdScheduleTemplates ScheduleTemplate[]
+  swapHistoryFrom          ShiftSwapHistory[]    @relation("SwapFromUser")
+  swapHistoryTo            ShiftSwapHistory[]    @relation("SwapToUser")
+  swapHistoryApprovedBy    ShiftSwapHistory[]    @relation("SwapApprovedBy")
+  bonuses                  Bonus[]
+  penalties                Penalty[]
+  bonusesCreated           Bonus[]               @relation("BonusCreatedBy")
+  penaltiesCreated         Penalty[]             @relation("PenaltyCreatedBy")
+  notifications            Notification[]
+  pushSubscriptions        PushSubscription[]
+  NotificationSettings     NotificationSettings?
+
+  @@index([email])
+  @@index([role])
+  @@index([telegramId])
+}
+
+model Restaurant {
+  id                String             @id @default(cuid())
+  name              String
+  address           String?
+  phone             String?
+  email             String?
+  isActive          Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  managerId         String?
+  departments       Department[]
+  feedback          Feedback[]
+  positions         Position[]
+  manager           User?              @relation("RestaurantManager", fields: [managerId], references: [id])
+  employees         RestaurantUser[]
+  shifts            Shift[]
+  shiftTemplates    ShiftTemplate[]
+  scheduleTemplates ScheduleTemplate[]
+  tasks             Task[]
+  timesheets        Timesheet[]
+  inviteLinks       InviteLink[]
+  swapHistory       ShiftSwapHistory[]
+  holidays          Holiday[]
+  bonuses           Bonus[]
+  penalties         Penalty[]
+
+  @@index([managerId])
+}
+
+model Department {
+  id           String           @id @default(cuid())
+  restaurantId String
+  name         String
+  isActive     Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  restaurant   Restaurant       @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  employees    RestaurantUser[]
+  inviteLinks  InviteLink[]     @relation("DepartmentInviteLinks")
+
+  @@index([restaurantId])
+}
+
+model Position {
+  id            String               @id @default(cuid())
+  restaurantId  String
+  name          String
+  isActive      Boolean              @default(true)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  bonusPerShift Float                @default(0) // Надбавка к смене (может быть 0)
+  restaurant    Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  employees     RestaurantUser[]
+  permissions   PositionPermission[]
+  inviteLinks   InviteLink[]         @relation("PositionInviteLinks")
+
+  @@index([restaurantId])
+}
+
+model Permission {
+  id                  String               @id @default(cuid())
+  code                String               @unique // Например: VIEW_SCHEDULE, EDIT_SCHEDULE
+  name                String // Название права
+  description         String? // Описание
+  category            String // Категория: RESTAURANTS, SCHEDULE, TASKS, TIMESHEETS, EMPLOYEES, etc.
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  positionPermissions PositionPermission[]
+
+  @@index([code])
+  @@index([category])
+}
+
+model PositionPermission {
+  id           String     @id @default(cuid())
+  positionId   String
+  permissionId String
+  createdAt    DateTime   @default(now())
+  position     Position   @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([positionId, permissionId])
+  @@index([positionId])
+  @@index([permissionId])
+}
+
+model RestaurantUser {
+  id           String      @id @default(cuid())
+  restaurantId String
+  userId       String
+  positionId   String
+  departmentId String?
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  department   Department? @relation(fields: [departmentId], references: [id])
+  position     Position    @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant   Restaurant  @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@unique([restaurantId, userId])
+  @@index([restaurantId])
+  @@index([userId])
+  @@index([positionId])
+  @@index([departmentId])
+}
+
+model ShiftTemplate {
+  id           String      @id @default(cuid())
+  restaurantId String?
+  name         String
+  startHour    Int
+  endHour      Int
+  color        String?
+  rate         Float       @default(0) // Ставка за смену
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  restaurant   Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@index([name])
+}
+
+model ScheduleTemplate {
+  id           String     @id @default(cuid())
+  restaurantId String
+  createdById  String
+  name         String
+  description  String?
+  periodType   String     @default("week") // "week" или "month"
+  shiftsData   String // JSON данные о сменах в шаблоне
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  createdBy    User       @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@index([createdById])
+  @@index([periodType])
+}
+
+model Shift {
+  id               String     @id @default(cuid())
+  restaurantId     String
+  userId           String
+  type             String
+  startTime        DateTime
+  endTime          DateTime
+  hours            Float
+  isConfirmed      Boolean    @default(false)
+  isCompleted      Boolean    @default(false)
+  notes            String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  swapRequested    Boolean    @default(false)
+  swapRequestedTo  String?
+  employeeResponse String? // PENDING, ACCEPTED, REJECTED - ответ сотрудника, которому предложили обмен
+  swapApproved     Boolean? // Финальное одобрение менеджером
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant       Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@index([userId])
+  @@index([startTime])
+  @@index([isConfirmed])
+}
+
+model Task {
+  id            String           @id @default(cuid())
+  restaurantId  String
+  createdById   String
+  assignedToId  String?
+  title         String
+  description   String?
+  category      String
+  status        String           @default("NEW")
+  dueDate       DateTime?
+  isRecurring   Boolean          @default(false)
+  recurringRule String?
+  qrCode        String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  completedAt   DateTime?
+  actionLogs    ActionLog[]
+  assignedTo    User?            @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  createdBy     User             @relation("TaskCreator", fields: [createdById], references: [id])
+  restaurant    Restaurant       @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  attachments   TaskAttachment[]
+
+  @@index([restaurantId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([category])
+}
+
+model TaskAttachment {
+  id        String   @id @default(cuid())
+  taskId    String
+  fileName  String
+  filePath  String
+  fileSize  Int
+  mimeType  String?
+  createdAt DateTime @default(now())
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+}
+
+model Timesheet {
+  id            String     @id @default(cuid())
+  restaurantId  String
+  userId        String
+  month         Int
+  year          Int
+  totalHours    Float      @default(0)
+  overtimeHours Float      @default(0)
+  lateCount     Int        @default(0)
+  sickDays      Int        @default(0)
+  vacationDays  Int        @default(0)
+  isApproved    Boolean    @default(false)
+  approvedById  String?
+  approvedAt    DateTime?
+  notes         String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant    Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  bonuses       Bonus[]
+  penalties     Penalty[]
+
+  @@unique([restaurantId, userId, month, year])
+  @@index([restaurantId])
+  @@index([userId])
+  @@index([year, month])
+}
+
+model Feedback {
+  id           String               @id @default(cuid())
+  restaurantId String
+  userId       String?
+  type         String
+  status       String               @default("PENDING")
+  title        String
+  message      String
+  isAnonymous  Boolean              @default(false)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  resolvedAt   DateTime?
+  user         User?                @relation(fields: [userId], references: [id])
+  restaurant   Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  attachments  FeedbackAttachment[]
+
+  @@index([restaurantId])
+  @@index([status])
+  @@index([type])
+}
+
+model FeedbackAttachment {
+  id         String   @id @default(cuid())
+  feedbackId String
+  fileName   String
+  filePath   String
+  fileSize   Int
+  mimeType   String?
+  createdAt  DateTime @default(now())
+  feedback   Feedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+
+  @@index([feedbackId])
+}
+
+model ActionLog {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String
+  entityType  String
+  entityId    String?
+  description String
+  metadata    String?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+  taskId      String?
+  task        Task?    @relation(fields: [taskId], references: [id])
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@index([type])
+}
+
+model InviteLink {
+  id           String      @id @default(cuid())
+  token        String      @unique // Уникальный токен для ссылки
+  restaurantId String? // Опционально (null для привязки Telegram)
+  positionId   String? // Опционально, можно назначить позже
+  departmentId String? // Опционально
+  createdById  String // Кто создал ссылку
+  expiresAt    DateTime? // Когда истекает ссылка (null = бессрочно)
+  maxUses      Int         @default(1) // Максимальное количество использований
+  usedCount    Int         @default(0) // Сколько раз использована
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  restaurant   Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  position     Position?   @relation("PositionInviteLinks", fields: [positionId], references: [id], onDelete: SetNull)
+  department   Department? @relation("DepartmentInviteLinks", fields: [departmentId], references: [id], onDelete: SetNull)
+  createdBy    User        @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([restaurantId])
+  @@index([createdById])
+  @@index([isActive])
+}
+
+model ShiftSwapHistory {
+  id             String     @id @default(cuid())
+  shiftId        String? // ID смены (может быть null для массовых операций)
+  restaurantId   String
+  fromUserId     String // Кто запросил обмен/изменение
+  toUserId       String? // С кем хочет обменяться (null для создания/удаления)
+  status         String     @default("REQUESTED") // REQUESTED, APPROVED, REJECTED, ACCEPTED_BY_EMPLOYEE, REJECTED_BY_EMPLOYEE, CREATED, UPDATED, DELETED
+  shiftDate      DateTime // Дата смены
+  shiftStartTime DateTime? // Время начала смены (может быть null для массовых операций)
+  shiftEndTime   DateTime? // Время окончания смены (может быть null для массовых операций)
+  shiftType      String? // Тип смены (может быть null для массовых операций)
+  requestedAt    DateTime   @default(now())
+  approvedAt     DateTime?
+  approvedById   String? // Кто одобрил/отклонил/выполнил действие
+  notes          String?
+  changeType     String? // Тип изменения: SWAP, CREATE, UPDATE, DELETE, BATCH_CREATE, BATCH_DELETE
+  restaurant     Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  fromUser       User       @relation("SwapFromUser", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser         User?      @relation("SwapToUser", fields: [toUserId], references: [id], onDelete: SetNull)
+  approvedBy     User?      @relation("SwapApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@index([restaurantId])
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@index([status])
+  @@index([shiftDate])
+  @@index([requestedAt])
+  @@index([changeType])
+}
+
+model Holiday {
+  id           String     @id @default(cuid())
+  restaurantId String
+  name         String // Название праздника или выходного
+  date         DateTime // Дата (без времени, только день)
+  type         String     @default("HOLIDAY") // HOLIDAY или WEEKEND
+  isRecurring  Boolean    @default(false) // Повторяющийся ежегодно
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@unique([restaurantId, date])
+  @@index([restaurantId])
+  @@index([date])
+  @@index([type])
+}
+
+model Bonus {
+  id           String     @id @default(cuid())
+  restaurantId String
+  userId       String
+  timesheetId  String? // Привязка к табелю (опционально)
+  amount       Float // Сумма премии
+  comment      String? // Комментарий
+  month        Int? // Месяц, за который начислена премия
+  year         Int? // Год, за который начислена премия
+  createdById  String // Кто начислил
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  timesheet    Timesheet? @relation(fields: [timesheetId], references: [id], onDelete: SetNull)
+  createdBy    User       @relation("BonusCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@index([userId])
+  @@index([timesheetId])
+  @@index([year, month])
+  @@index([createdAt])
+}
+
+model Penalty {
+  id           String     @id @default(cuid())
+  restaurantId String
+  userId       String
+  timesheetId  String? // Привязка к табелю (опционально)
+  amount       Float // Сумма штрафа
+  comment      String? // Комментарий
+  month        Int? // Месяц, за который назначен штраф
+  year         Int? // Год, за который назначен штраф
+  createdById  String // Кто назначил
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  timesheet    Timesheet? @relation(fields: [timesheetId], references: [id], onDelete: SetNull)
+  createdBy    User       @relation("PenaltyCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@index([userId])
+  @@index([timesheetId])
+  @@index([year, month])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String // TASK_ASSIGNED, TASK_COMMENT, SHIFT_CREATED, SHIFT_SWAP_REQUEST, SHIFT_SWAP_APPROVED, etc.
+  title     String
+  message   String
+  link      String? // Ссылка на связанную сущность (например, /tasks/:id)
+  isRead    Boolean   @default(false)
+  metadata  String? // JSON данные для дополнительной информации
+  createdAt DateTime  @default(now())
+  readAt    DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+  @@index([type])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isActive])
+}
+
+model NotificationSettings {
+  id                           String   @id @default(cuid())
+  userId                       String   @unique
+  enablePushNotifications      Boolean  @default(true)
+  enableTaskNotifications      Boolean  @default(true)
+  enableShiftNotifications     Boolean  @default(true)
+  enableSwapNotifications      Boolean  @default(true)
+  enableTimesheetNotifications Boolean  @default(true)
+  enableInAppNotifications     Boolean  @default(true)
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime @updatedAt
+  user                         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
