@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { Shift, ShiftTemplate } from './types';
-import { Trash2 } from 'lucide-react';
+import { Trash2, ArrowLeftRight } from 'lucide-react';
 
 interface EmployeeRow {
   id: string;
@@ -20,6 +20,7 @@ interface ScheduleTableProps {
   employeesFlat?: { id: string; firstName: string; lastName: string; position?: string | null }[];
   user: any;
   hasEditSchedule: boolean;
+  hasRequestShiftSwap: boolean;
   handleCellClick: (employeeId: string, day: Date, shift: Shift | null, e?: React.MouseEvent) => void;
   getShiftForCell: (employeeId: string, day: Date) => Shift | null;
   onDeleteEmployeeShifts: (employeeId: string) => void;
@@ -51,6 +52,7 @@ export default function ScheduleTable({
   employeesFlat = [],
   user,
   hasEditSchedule,
+  hasRequestShiftSwap,
   handleCellClick,
   getShiftForCell,
   onDeleteEmployeeShifts,
@@ -173,14 +175,14 @@ export default function ScheduleTable({
                         const isSelected = selectedCells.has(cellKey);
                         const shiftTemplate = shift ? templates.find((t) => t.id === shift.type || t.name === shift.type) : null;
                         const isOwnShift = shift && shift.userId === user?.id;
-                        const canInline = shift && (hasEditSchedule || isOwnShift);
+                        const canInline = shift && (hasEditSchedule || (isOwnShift && hasRequestShiftSwap));
                         const isInline = inlineEditKey === cellKey;
 
                         return (
                           <td
                             key={day.toISOString()}
                             className={`px-1 sm:px-2 py-2 sm:py-3 text-center border border-gray-100 ${
-                              hasEditSchedule || (shift && shift.userId === user?.id)
+                              hasEditSchedule || (shift && shift.userId === user?.id && hasRequestShiftSwap)
                                 ? 'cursor-pointer hover:bg-blue-50 active:bg-blue-100'
                                 : ''
                             } ${isSelected ? 'bg-blue-200 ring-2 ring-blue-500' : ''}`}
@@ -193,18 +195,33 @@ export default function ScheduleTable({
                             }}
                           >
                             {shift ? (
-                              <div className="flex flex-col items-center gap-1">
+                              <div className="flex flex-col items-center gap-1 relative group">
                                 {!isInline && (
-                                  <span
-                                    className="inline-block px-2 py-1 rounded text-xs text-white font-medium select-none"
-                                    style={{
-                                      backgroundColor: shiftTemplate?.color || shiftTypeColors[shift.type] || '#gray',
-                                    }}
-                                    title={shiftTemplate?.name || shift.type}
-                                  >
-                                    {shiftTemplate ? shiftTemplate.name.substring(0, 1).toUpperCase() : shiftTypeLabels[shift.type] || shift.type}
-                                    {shift.swapRequested && ' ⚠️'}
-                                  </span>
+                                  <>
+                                    <span
+                                      className="inline-block px-2 py-1 rounded text-xs text-white font-medium select-none"
+                                      style={{
+                                        backgroundColor: shiftTemplate?.color || shiftTypeColors[shift.type] || '#gray',
+                                      }}
+                                      title={shiftTemplate?.name || shift.type}
+                                    >
+                                      {shiftTemplate ? shiftTemplate.name.substring(0, 1).toUpperCase() : shiftTypeLabels[shift.type] || shift.type}
+                                      {shift.swapRequested && ' ⚠️'}
+                                    </span>
+                                    {/* Кнопка обмена для своих смен */}
+                                    {isOwnShift && hasRequestShiftSwap && !hasEditSchedule && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onQuickSwap(shift);
+                                        }}
+                                        className="opacity-0 group-hover:opacity-100 transition-opacity absolute -top-1 -right-1 p-1 bg-blue-500 text-white rounded-full shadow-md hover:bg-blue-600"
+                                        title="Запросить обмен"
+                                      >
+                                        <ArrowLeftRight className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </>
                                 )}
 
                                 {isInline && canInline && (
@@ -252,7 +269,7 @@ export default function ScheduleTable({
                                           Отмена
                                         </button>
                                       </div>
-                                      {isOwnShift && (
+                                      {isOwnShift && hasRequestShiftSwap && (
                                         <button
                                           onClick={() => {
                                             onQuickSwap(shift);

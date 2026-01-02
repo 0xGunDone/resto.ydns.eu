@@ -36,25 +36,18 @@ export const getPositionPermissions = async (req: AuthRequest, res: Response, ne
 
     const position = await dbClient.position.findUnique({
       where: { id: positionId },
-      include: {
-        permissions: {
-          include: {
-            permission: true,
-          },
-        },
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-      },
     });
 
     if (!position) {
       res.status(404).json({ error: 'Position not found' });
       return;
     }
+
+    // Получаем ресторан отдельным запросом
+    const restaurant = await dbClient.restaurant.findUnique({
+      where: { id: position.restaurantId },
+      select: { id: true, name: true, managerId: true },
+    });
 
     // Проверка доступа - только владелец ресторана или админ
     if (req.user?.role !== 'OWNER' && req.user?.role !== 'ADMIN') {
@@ -71,31 +64,39 @@ export const getPositionPermissions = async (req: AuthRequest, res: Response, ne
         return;
       }
 
-      // Проверяем, есть ли право редактировать должности
-      // Для упрощения - проверяем, является ли пользователь менеджером ресторана
-      const restaurant = await dbClient.restaurant.findUnique({
-        where: { id: position.restaurantId },
-        select: { managerId: true },
-      });
-
+      // Проверяем, является ли пользователь менеджером ресторана
       if (restaurant?.managerId !== req.user.id) {
         res.status(403).json({ error: 'Forbidden: Only restaurant manager can edit positions' });
         return;
       }
     }
 
-    const permissions = position.permissions.map((pp) => ({
-      id: pp.permission.id,
-      code: pp.permission.code,
-      name: pp.permission.name,
-      category: pp.permission.category,
-    }));
+    // Получаем права должности отдельным запросом
+    const positionPermissions = await dbClient.positionPermission.findMany({
+      where: { positionId },
+    });
+
+    // Получаем детали прав
+    const permissionIds = positionPermissions.map((pp: any) => pp.permissionId);
+    let permissions: any[] = [];
+    
+    if (permissionIds.length > 0) {
+      const allPermissions = await dbClient.permission.findMany({});
+      permissions = allPermissions
+        .filter((p: any) => permissionIds.includes(p.id))
+        .map((p: any) => ({
+          id: p.id,
+          code: p.code,
+          name: p.name,
+          category: p.category,
+        }));
+    }
 
     res.json({
       position: {
         id: position.id,
         name: position.name,
-        restaurant: position.restaurant,
+        restaurant: restaurant ? { id: restaurant.id, name: restaurant.name } : null,
       },
       permissions,
     });

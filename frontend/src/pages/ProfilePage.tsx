@@ -108,6 +108,21 @@ export default function ProfilePage() {
     }
   };
 
+  const handleUnlinkTelegram = async () => {
+    if (!confirm('Вы уверены, что хотите отвязать Telegram аккаунт? Вы перестанете получать уведомления.')) {
+      return;
+    }
+    
+    try {
+      await api.post('/auth/telegram/unlink');
+      setTelegramLinked(false);
+      setBindLink(null);
+      toast.success('Telegram аккаунт отвязан');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Ошибка отвязки Telegram');
+    }
+  };
+
 
   if (loading) {
     return (
@@ -257,6 +272,13 @@ export default function ProfilePage() {
                   <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
                     <p className="text-green-800 font-medium">✅ Telegram аккаунт привязан</p>
                     <p className="text-sm text-green-600 mt-1">Вы будете получать уведомления через Telegram</p>
+                    <button
+                      type="button"
+                      onClick={handleUnlinkTelegram}
+                      className="mt-3 text-sm text-red-600 hover:text-red-800 underline"
+                    >
+                      Отвязать Telegram
+                    </button>
                   </div>
                 ) : (
                   <div className="space-y-3">

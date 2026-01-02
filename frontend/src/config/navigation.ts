@@ -9,6 +9,7 @@ import {
   Briefcase,
   FolderTree,
   Clock,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { MenuItem, MenuCategory } from '../types/navigation';
 
@@ -51,6 +52,14 @@ export const navigationCategories: MenuCategory[] = [
         href: '/schedule',
         icon: Calendar,
         requiredPermissions: ['VIEW_SCHEDULE', 'EDIT_SCHEDULE'],
+        requireContext: 'restaurant',
+      },
+      {
+        id: 'swap-requests',
+        name: 'Обмен сменами',
+        href: '/swap-requests',
+        icon: ArrowLeftRight,
+        requiredPermissions: ['REQUEST_SHIFT_SWAP', 'APPROVE_SHIFT_SWAP'],
         requireContext: 'restaurant',
       },
       {

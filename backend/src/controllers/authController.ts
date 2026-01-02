@@ -540,3 +540,66 @@ export const updateProfile = async (req: AuthRequest, res: Response, next: NextF
   }
 };
 
+
+
+// Отвязка Telegram аккаунта
+export const unlinkTelegram = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const user = await dbClient.user.findUnique({
+      where: { id: req.user.id },
+      select: { telegramId: true } as any,
+    });
+
+    if (!(user as any)?.telegramId) {
+      res.status(400).json({ error: 'Telegram account is not linked' });
+      return;
+    }
+
+    // Отвязываем Telegram
+    await dbClient.user.update({
+      where: { id: req.user.id },
+      data: { telegramId: null },
+    });
+
+    await logAction({
+      userId: req.user.id,
+      type: ActionLogType.UPDATE,
+      entityType: 'User',
+      entityId: req.user.id,
+      description: 'Telegram account unlinked',
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    res.json({ message: 'Telegram account unlinked successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Получение статуса привязки Telegram
+export const getTelegramStatus = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const user = await dbClient.user.findUnique({
+      where: { id: req.user.id },
+      select: { telegramId: true } as any,
+    });
+
+    res.json({ 
+      linked: !!(user as any)?.telegramId,
+      telegramId: (user as any)?.telegramId || null,
+    });
+  } catch (error) {
+    next(error);
+  }
+};

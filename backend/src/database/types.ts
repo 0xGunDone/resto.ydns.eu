@@ -19,7 +19,7 @@ export type FeedbackStatus = 'PENDING' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
 export type NotificationType = 'SHIFT_ASSIGNED' | 'SHIFT_CHANGED' | 'TASK_ASSIGNED' | 'TASK_UPDATED' | 'GENERAL';
 
 // Swap request statuses
-export type SwapRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
+export type SwapRequestStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'APPROVED' | 'MANAGER_REJECTED' | 'EXPIRED' | 'CANCELLED';
 
 /**
  * User entity
@@ -287,6 +287,24 @@ export interface ShiftSwapHistory {
 }
 
 /**
+ * SwapRequest entity - for shift swap requests
+ */
+export interface SwapRequest {
+  id: string;
+  shiftId: string;
+  fromUserId: string;
+  toUserId: string;
+  status: SwapRequestStatus;
+  requestedAt: string;
+  respondedAt: string | null;
+  approvedAt: string | null;
+  approvedById: string | null;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
  * Holiday entity
  */
 export interface Holiday {
@@ -463,6 +481,13 @@ export interface InviteLinkWithRelations extends InviteLink {
   position?: Position;
   department?: Department;
   createdBy?: User;
+}
+
+export interface SwapRequestWithRelations extends SwapRequest {
+  shift?: Shift;
+  fromUser?: User;
+  toUser?: User;
+  approvedBy?: User;
 }
 
 // ============================================

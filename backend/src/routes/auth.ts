@@ -76,5 +76,9 @@ router.put(
   authController.updateProfile
 );
 
+// Telegram интеграция
+router.get('/telegram/status', authenticate, authController.getTelegramStatus);
+router.post('/telegram/unlink', authenticate, authController.unlinkTelegram);
+
 export default router;
 

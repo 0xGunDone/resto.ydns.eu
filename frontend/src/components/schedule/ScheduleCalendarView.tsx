@@ -16,6 +16,7 @@ interface ScheduleCalendarViewProps {
   isHoliday: (date: Date) => any;
   user: any;
   hasEditSchedule: boolean;
+  hasRequestShiftSwap: boolean;
   onEditShift: (shift: Shift) => void;
   onRequestSwap: (shift: Shift) => void;
 }
@@ -31,6 +32,7 @@ export default function ScheduleCalendarView({
   isHoliday,
   user,
   hasEditSchedule,
+  hasRequestShiftSwap,
   onEditShift,
   onRequestSwap,
 }: ScheduleCalendarViewProps) {
@@ -181,7 +183,7 @@ export default function ScheduleCalendarView({
                 const isMyShift = shift.userId === user?.id;
                 if (hasEditSchedule) {
                   onEditShift(shift);
-                } else if (isMyShift) {
+                } else if (isMyShift && hasRequestShiftSwap) {
                   onRequestSwap(shift);
                 }
               }

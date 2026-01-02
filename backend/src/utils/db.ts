@@ -1269,6 +1269,314 @@ const dbClientWithModels = {
   notification: createModelMethods('Notification'),
   pushSubscription: createModelMethods('PushSubscription'),
   notificationSettings: createModelMethods('NotificationSettings'),
+  swapRequest: {
+    findUnique: async (args: { where: WhereClause; select?: SelectFields; include?: IncludeClause }) => {
+      const { where, select, include } = args;
+      const { sql: whereSql, params } = buildWhereClause(where);
+      const finalSql = `SELECT * FROM SwapRequest ${whereSql} LIMIT 1`;
+      
+      const row = sqliteConnection.prepare(finalSql).get(...params) as any;
+      if (!row) return null;
+      
+      const convertedRow = convertBooleanFields(row);
+
+      if (include) {
+        if (include.shift) {
+          const shiftRow = convertedRow.shiftId ? sqliteConnection.prepare('SELECT * FROM Shift WHERE id = ?').get(convertedRow.shiftId) : null;
+          convertedRow.shift = shiftRow ? convertBooleanFields(shiftRow) : null;
+        }
+        if (include.fromUser) {
+          const fromUserRow = convertedRow.fromUserId ? sqliteConnection.prepare('SELECT * FROM User WHERE id = ?').get(convertedRow.fromUserId) : null;
+          convertedRow.fromUser = fromUserRow ? convertBooleanFields(fromUserRow) : null;
+        }
+        if (include.toUser) {
+          const toUserRow = convertedRow.toUserId ? sqliteConnection.prepare('SELECT * FROM User WHERE id = ?').get(convertedRow.toUserId) : null;
+          convertedRow.toUser = toUserRow ? convertBooleanFields(toUserRow) : null;
+        }
+        if (include.approvedBy) {
+          const approvedByRow = convertedRow.approvedById ? sqliteConnection.prepare('SELECT * FROM User WHERE id = ?').get(convertedRow.approvedById) : null;
+          convertedRow.approvedBy = approvedByRow ? convertBooleanFields(approvedByRow) : null;
+        }
+      }
+
+      const selectFields = getSelectFields(select);
+      if (selectFields) {
+        const filtered: any = {};
+        for (const field of selectFields) {
+          if (convertedRow[field] !== undefined) {
+            filtered[field] = convertedRow[field];
+          }
+        }
+        return filtered;
+      }
+      return convertedRow;
+    },
+
+    findFirst: async (args: { where?: WhereClause; select?: SelectFields; include?: IncludeClause; orderBy?: any }) => {
+      const { where = {}, select, include, orderBy } = args;
+      const { sql: whereSql, params } = buildWhereClause(where);
+      let sql = `SELECT * FROM SwapRequest ${whereSql}`;
+
+      if (orderBy) {
+        const orderByObj = Array.isArray(orderBy) ? orderBy[0] : orderBy;
+        const orderByKey = Object.keys(orderByObj)[0];
+        const orderByValue = orderByObj[orderByKey];
+        sql += ` ORDER BY ${orderByKey} ${orderByValue === 'desc' ? 'DESC' : 'ASC'}`;
+      }
+
+      sql += ' LIMIT 1';
+      const row = sqliteConnection.prepare(sql).get(...params) as any;
+      
+      if (!row) return null;
+
+      const convertedRow = convertBooleanFields(row);
+
+      if (include) {
+        if (include.shift) {
+          const shiftRow = convertedRow.shiftId ? sqliteConnection.prepare('SELECT * FROM Shift WHERE id = ?').get(convertedRow.shiftId) : null;
+          convertedRow.shift = shiftRow ? convertBooleanFields(shiftRow) : null;
+        }
+        if (include.fromUser) {
+          const fromUserRow = convertedRow.fromUserId ? sqliteConnection.prepare('SELECT * FROM User WHERE id = ?').get(convertedRow.fromUserId) : null;
+          convertedRow.fromUser = fromUserRow ? convertBooleanFields(fromUserRow) : null;
+        }
+        if (include.toUser) {
+          const toUserRow = convertedRow.toUserId ? sqliteConnection.prepare('SELECT * FROM User WHERE id = ?').get(convertedRow.toUserId) : null;
+          convertedRow.toUser = toUserRow ? convertBooleanFields(toUserRow) : null;
+        }
+        if (include.approvedBy) {
+          const approvedByRow = convertedRow.approvedById ? sqliteConnection.prepare('SELECT * FROM User WHERE id = ?').get(convertedRow.approvedById) : null;
+          convertedRow.approvedBy = approvedByRow ? convertBooleanFields(approvedByRow) : null;
+        }
+      }
+
+      const selectFields = getSelectFields(select);
+      if (selectFields) {
+        const filtered: any = {};
+        for (const field of selectFields) {
+          if (convertedRow[field] !== undefined) {
+            filtered[field] = convertedRow[field];
+          }
+        }
+        return filtered;
+      }
+      return convertedRow;
+    },
+
+    findMany: async (args: { where?: WhereClause; select?: SelectFields; include?: IncludeClause; orderBy?: any; take?: number; skip?: number } = {}) => {
+      const { where = {}, select, include, orderBy, take, skip } = args;
+      const { sql: whereSql, params } = buildWhereClause(where);
+      let sql = `SELECT * FROM SwapRequest ${whereSql}`;
+
+      if (orderBy) {
+        const orderByObj = Array.isArray(orderBy) ? orderBy[0] : orderBy;
+        const orderByKey = Object.keys(orderByObj)[0];
+        const orderByValue = orderByObj[orderByKey];
+        sql += ` ORDER BY ${orderByKey} ${orderByValue === 'desc' ? 'DESC' : 'ASC'}`;
+      }
+      
+      if (take) sql += ` LIMIT ${take}`;
+      if (skip) sql += ` OFFSET ${skip}`;
+
+      const rows = sqliteConnection.prepare(sql).all(...params) as any[];
+      const convertedRows = rows.map(row => convertBooleanFields(row));
+
+      if (include) {
+        for (const row of convertedRows) {
+          if (include.shift) {
+            const shiftRow = row.shiftId ? sqliteConnection.prepare('SELECT * FROM Shift WHERE id = ?').get(row.shiftId) : null;
+            row.shift = shiftRow ? convertBooleanFields(shiftRow) : null;
+          }
+          if (include.fromUser) {
+            const fromUserRow = row.fromUserId ? sqliteConnection.prepare('SELECT * FROM User WHERE id = ?').get(row.fromUserId) : null;
+            row.fromUser = fromUserRow ? convertBooleanFields(fromUserRow) : null;
+          }
+          if (include.toUser) {
+            const toUserRow = row.toUserId ? sqliteConnection.prepare('SELECT * FROM User WHERE id = ?').get(row.toUserId) : null;
+            row.toUser = toUserRow ? convertBooleanFields(toUserRow) : null;
+          }
+          if (include.approvedBy) {
+            const approvedByRow = row.approvedById ? sqliteConnection.prepare('SELECT * FROM User WHERE id = ?').get(row.approvedById) : null;
+            row.approvedBy = approvedByRow ? convertBooleanFields(approvedByRow) : null;
+          }
+        }
+      }
+
+      const selectFields = getSelectFields(select);
+      if (selectFields) {
+        return convertedRows.map(row => {
+          const filtered: any = {};
+          for (const field of selectFields) {
+            if (row[field] !== undefined) {
+              filtered[field] = row[field];
+            }
+          }
+          return filtered;
+        });
+      }
+      return convertedRows;
+    },
+
+    create: async (args: { data: Record<string, any>; select?: SelectFields; include?: IncludeClause }) => {
+      const { data, select, include } = args;
+      const id = data.id || generateId();
+      const now = new Date().toISOString();
+
+      const fields = Object.keys(data).filter(k => k !== 'id');
+      const values = fields.map(() => '?');
+      const params = [id, ...fields.map(f => {
+        if (data[f] instanceof Date) return data[f].toISOString();
+        if (typeof data[f] === 'boolean') return data[f] ? 1 : 0;
+        return data[f];
+      })];
+
+      if (!data.requestedAt) {
+        fields.push('requestedAt');
+        values.push('?');
+        params.push(now);
+      }
+      if (!data.createdAt) {
+        fields.push('createdAt');
+        values.push('?');
+        params.push(now);
+      }
+      if (!data.updatedAt) {
+        fields.push('updatedAt');
+        values.push('?');
+        params.push(now);
+      }
+
+      const sql = `INSERT INTO SwapRequest (id, ${fields.join(', ')}) VALUES (?, ${values.join(', ')})`;
+      sqliteConnection.prepare(sql).run(...params);
+
+      return dbClientWithModels.swapRequest.findUnique({ where: { id }, select, include });
+    },
+
+    update: async (args: { where: WhereClause; data: Record<string, any>; select?: SelectFields; include?: IncludeClause }) => {
+      const { where, data, select, include } = args;
+      const { sql: whereSql, params: whereParams } = buildWhereClause(where);
+
+      const updateFields = Object.keys(data).filter(k => k !== 'id' && data[k] !== undefined);
+      
+      if (updateFields.length === 0) {
+        return dbClientWithModels.swapRequest.findUnique({ where, select, include });
+      }
+      
+      const fieldsWithParams: string[] = [];
+      const nullFields: string[] = [];
+      
+      for (const f of updateFields) {
+        if (data[f] === null) {
+          nullFields.push(f);
+        } else {
+          fieldsWithParams.push(f);
+        }
+      }
+      
+      const setClauseParts: string[] = [];
+      
+      for (const f of fieldsWithParams) {
+        setClauseParts.push(`${f} = ?`);
+      }
+      
+      for (const f of nullFields) {
+        setClauseParts.push(`${f} = NULL`);
+      }
+      
+      const setClause = setClauseParts.join(', ');
+
+      const updateParams = fieldsWithParams.map(f => {
+        if (data[f] instanceof Date) return data[f].toISOString();
+        if (typeof data[f] === 'boolean') return data[f] ? 1 : 0;
+        return data[f];
+      });
+
+      const now = new Date().toISOString();
+      const needsUpdatedAt = !updateFields.includes('updatedAt');
+      const finalSetClause = needsUpdatedAt ? `${setClause}, updatedAt = ?` : setClause;
+      const finalUpdateParams = needsUpdatedAt ? [...updateParams, now] : updateParams;
+
+      const whereSqlWithQuestion = whereSql.replace(/\$\d+/g, '?');
+      const finalSql = `UPDATE SwapRequest SET ${finalSetClause} ${whereSqlWithQuestion}`;
+      const finalParams = [...finalUpdateParams, ...whereParams];
+
+      sqliteConnection.prepare(finalSql).run(...finalParams);
+
+      return dbClientWithModels.swapRequest.findUnique({ where, select, include });
+    },
+
+    delete: async (args: { where: WhereClause }) => {
+      const { where } = args;
+      const { sql: whereSql, params } = buildWhereClause(where);
+      sqliteConnection.prepare(`DELETE FROM SwapRequest ${whereSql}`).run(...params);
+    },
+
+    count: async (args: { where?: WhereClause } = {}) => {
+      const { where = {} } = args;
+      const { sql: whereSql, params } = buildWhereClause(where);
+      const result = sqliteConnection.prepare(`SELECT COUNT(*) as count FROM SwapRequest ${whereSql}`).get(...params) as { count: number };
+      return result.count;
+    },
+
+    deleteMany: async (args: { where: WhereClause }) => {
+      const { where } = args;
+      const { sql: whereSql, params } = buildWhereClause(where);
+      const result = sqliteConnection.prepare(`DELETE FROM SwapRequest ${whereSql}`).run(...params);
+      return { count: result.changes || 0 };
+    },
+
+    updateMany: async (args: { where: WhereClause; data: Record<string, any> }) => {
+      const { where, data } = args;
+      const { sql: whereSql, params: whereParams } = buildWhereClause(where);
+
+      const updateFields = Object.keys(data).filter(k => k !== 'id' && data[k] !== undefined);
+      
+      if (updateFields.length === 0) {
+        return { count: 0 };
+      }
+      
+      const fieldsWithParams: string[] = [];
+      const nullFields: string[] = [];
+      
+      for (const f of updateFields) {
+        if (data[f] === null) {
+          nullFields.push(f);
+        } else {
+          fieldsWithParams.push(f);
+        }
+      }
+      
+      const setClauseParts: string[] = [];
+      
+      for (const f of fieldsWithParams) {
+        setClauseParts.push(`${f} = ?`);
+      }
+      
+      for (const f of nullFields) {
+        setClauseParts.push(`${f} = NULL`);
+      }
+      
+      const setClause = setClauseParts.join(', ');
+
+      const updateParams = fieldsWithParams.map(f => {
+        if (data[f] instanceof Date) return data[f].toISOString();
+        if (typeof data[f] === 'boolean') return data[f] ? 1 : 0;
+        return data[f];
+      });
+
+      const now = new Date().toISOString();
+      const needsUpdatedAt = !updateFields.includes('updatedAt');
+      const finalSetClause = needsUpdatedAt ? `${setClause}, updatedAt = ?` : setClause;
+      const finalUpdateParams = needsUpdatedAt ? [...updateParams, now] : updateParams;
+
+      const whereSqlWithQuestion = whereSql.replace(/\$\d+/g, '?');
+      const finalSql = `UPDATE SwapRequest SET ${finalSetClause} ${whereSqlWithQuestion}`;
+      const finalParams = [...finalUpdateParams, ...whereParams];
+
+      const result = sqliteConnection.prepare(finalSql).run(...finalParams);
+      return { count: result.changes || 0 };
+    },
+  },
 };
 
 // Экспортируем dbClient и sqliteConnection

@@ -1,6 +1,6 @@
 /**
  * Property-Based Tests for Permission Service
- * Tests for Properties 1, 2, 3, 4 from the design document
+ * Tests for Properties 1, 2, 3, 4, 8 from the design document
  */
 
 import { describe, it, expect } from 'vitest';
@@ -10,6 +10,7 @@ import {
   PermissionServiceDatabase,
   PERMISSIONS,
   MANAGER_AUTO_PERMISSIONS,
+  DEFAULT_EMPLOYEE_PERMISSIONS,
   PermissionCode,
 } from '../../src/services/permissionService';
 
@@ -546,6 +547,94 @@ describe('Permission Service Properties', () => {
 
           expect(service.isDataOwner(userId, targetUserId)).toBe(false);
         }),
+        { numRuns: 100 }
+      );
+    });
+  });
+
+  /**
+   * **Feature: platform-upgrade, Property 8: New permissions exist**
+   * **Validates: Requirements 6.1, 6.2, 7.1, 7.2, 8.1, 8.2**
+   * 
+   * For all new permission codes (REQUEST_SHIFT_SWAP, APPROVE_SHIFT_SWAP, 
+   * SEND_ANNOUNCEMENTS, VIEW_ANNOUNCEMENTS, VIEW_REPORTS, EXPORT_REPORTS),
+   * they SHALL exist in PERMISSIONS constant.
+   */
+  describe('Property 8: New permissions exist', () => {
+    const newPermissions = [
+      'REQUEST_SHIFT_SWAP',
+      'APPROVE_SHIFT_SWAP',
+      'SEND_ANNOUNCEMENTS',
+      'VIEW_ANNOUNCEMENTS',
+      'VIEW_REPORTS',
+      'EXPORT_REPORTS',
+    ] as const;
+
+    it('should have all new permission codes in PERMISSIONS constant', () => {
+      fc.assert(
+        fc.property(
+          fc.constantFrom(...newPermissions),
+          (permissionKey) => {
+            // Verify the permission exists in PERMISSIONS
+            expect(PERMISSIONS).toHaveProperty(permissionKey);
+            // Verify the value matches the key (convention)
+            expect(PERMISSIONS[permissionKey as keyof typeof PERMISSIONS]).toBe(permissionKey);
+          }
+        ),
+        { numRuns: 100 }
+      );
+    });
+
+    it('should include REQUEST_SHIFT_SWAP in DEFAULT_EMPLOYEE_PERMISSIONS', () => {
+      expect(DEFAULT_EMPLOYEE_PERMISSIONS).toContain(PERMISSIONS.REQUEST_SHIFT_SWAP);
+    });
+
+    it('should include VIEW_ANNOUNCEMENTS in DEFAULT_EMPLOYEE_PERMISSIONS', () => {
+      expect(DEFAULT_EMPLOYEE_PERMISSIONS).toContain(PERMISSIONS.VIEW_ANNOUNCEMENTS);
+    });
+
+    it('should include APPROVE_SHIFT_SWAP in MANAGER_AUTO_PERMISSIONS', () => {
+      expect(MANAGER_AUTO_PERMISSIONS).toContain(PERMISSIONS.APPROVE_SHIFT_SWAP);
+    });
+
+    it('should include SEND_ANNOUNCEMENTS in MANAGER_AUTO_PERMISSIONS', () => {
+      expect(MANAGER_AUTO_PERMISSIONS).toContain(PERMISSIONS.SEND_ANNOUNCEMENTS);
+    });
+
+    it('should include VIEW_ANNOUNCEMENTS in MANAGER_AUTO_PERMISSIONS', () => {
+      expect(MANAGER_AUTO_PERMISSIONS).toContain(PERMISSIONS.VIEW_ANNOUNCEMENTS);
+    });
+
+    it('should include VIEW_REPORTS in MANAGER_AUTO_PERMISSIONS', () => {
+      expect(MANAGER_AUTO_PERMISSIONS).toContain(PERMISSIONS.VIEW_REPORTS);
+    });
+
+    it('should include EXPORT_REPORTS in MANAGER_AUTO_PERMISSIONS', () => {
+      expect(MANAGER_AUTO_PERMISSIONS).toContain(PERMISSIONS.EXPORT_REPORTS);
+    });
+
+    it('should grant new permissions to OWNER/ADMIN users', async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          userIdArb,
+          restaurantIdArb,
+          fc.constantFrom(...newPermissions),
+          fc.constantFrom('OWNER', 'ADMIN'),
+          async (userId, restaurantId, permissionKey, role) => {
+            const permission = PERMISSIONS[permissionKey as keyof typeof PERMISSIONS];
+            const db = createMockDatabase({
+              userRoles: new Map([[userId, role]]),
+            });
+            const service = createPermissionService(db);
+
+            const result = await service.checkPermission(
+              { userId, restaurantId },
+              permission
+            );
+
+            expect(result.allowed).toBe(true);
+          }
+        ),
         { numRuns: 100 }
       );
     });

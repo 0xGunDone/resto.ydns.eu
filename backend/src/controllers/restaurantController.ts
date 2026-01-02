@@ -4,6 +4,7 @@ import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
 import { logger } from '../services/loggerService';
+import { createPresetPositions } from '../services/presetPositionService';
 
 // Получение всех ресторанов
 export const getRestaurants = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
@@ -91,6 +92,18 @@ export const createRestaurant = async (req: AuthRequest, res: Response, next: Ne
       },
       include: { manager: true },
     });
+
+    // Create preset positions for the new restaurant
+    try {
+      await createPresetPositions(restaurant.id);
+      logger.info(`Created preset positions for restaurant: ${restaurant.name}`);
+    } catch (positionError: any) {
+      logger.error('Failed to create preset positions', { 
+        error: positionError?.message, 
+        restaurantId: restaurant.id 
+      });
+      // Don't fail the restaurant creation if preset positions fail
+    }
 
     await logAction({
       userId: req.user.id,

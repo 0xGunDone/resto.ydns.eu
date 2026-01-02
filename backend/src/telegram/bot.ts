@@ -882,6 +882,94 @@ export async function startBot(): Promise<void> {
     await ctx.reply(message);
   });
 
+  bot.command('schedule', async (ctx: MyContext) => {
+    if (!ctx.from) {
+      await ctx.reply('❌ Ошибка: не удалось определить пользователя');
+      return;
+    }
+
+    const telegramId = ctx.telegramUserId;
+    const user = await (dbClient.user.findFirst as any)({
+      where: { telegramId: telegramId },
+      include: {
+        restaurants: {
+          where: { isActive: true },
+          include: {
+            restaurant: true,
+          },
+        },
+      },
+    }) as UserWithRestaurants | null;
+
+    if (!user) {
+      await ctx.reply('❌ Вы не зарегистрированы. Используйте пригласительную ссылку для регистрации.');
+      return;
+    }
+
+    // Получаем смены на ближайшие 7 дней
+    const now = new Date();
+    const weekLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const shifts = await dbClient.shift.findMany({
+      where: {
+        userId: user.id,
+        startTime: {
+          gte: now.toISOString(),
+          lte: weekLater.toISOString(),
+        },
+      },
+      orderBy: { startTime: 'asc' },
+      include: {
+        restaurant: true,
+      },
+    });
+
+    if (shifts.length === 0) {
+      await ctx.reply('📅 У вас нет запланированных смен на ближайшие 7 дней.');
+      return;
+    }
+
+    // Получаем все шаблоны смен для отображения названий
+    const shiftTemplates = await dbClient.shiftTemplate.findMany({});
+    const templateMap = new Map(shiftTemplates.map((t: any) => [t.id, t.name]));
+
+    let message = '📅 Ваш график на ближайшие 7 дней:\n\n';
+
+    for (const shift of shifts) {
+      const startDate = new Date(shift.startTime);
+      const endDate = new Date(shift.endTime);
+      
+      const dateStr = startDate.toLocaleDateString('ru-RU', { 
+        weekday: 'short', 
+        day: 'numeric', 
+        month: 'short' 
+      });
+      const startTimeStr = startDate.toLocaleTimeString('ru-RU', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+      const endTimeStr = endDate.toLocaleTimeString('ru-RU', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+
+      const statusIcon = shift.isConfirmed ? '✅' : '⏳';
+      const restaurantName = shift.restaurant?.name || 'Неизвестный ресторан';
+      // Получаем название типа смены из шаблона или используем тип напрямую
+      const shiftTypeName = templateMap.get(shift.type) || shift.type;
+
+      message += `${statusIcon} ${dateStr}\n`;
+      message += `   🕐 ${startTimeStr} - ${endTimeStr}\n`;
+      message += `   🏢 ${restaurantName}\n`;
+      if (shiftTypeName && shiftTypeName !== shift.type) {
+        message += `   📋 ${shiftTypeName}\n`;
+      }
+      message += '\n';
+    }
+
+    await ctx.reply(message);
+  });
+
   bot.command('help', async (ctx: MyContext) => {
     await ctx.reply(
       '📖 Справка по боту\n\n' +

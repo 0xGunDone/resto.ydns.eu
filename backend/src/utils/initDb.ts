@@ -46,6 +46,68 @@ export async function initDatabase() {
   // Если таблица User уже существует, считаем что БД инициализирована
   if (tableExists('User')) {
     logger.info('Database already initialized');
+    
+    // Ensure TelegramSession table exists (added in later migration)
+    if (!tableExists('TelegramSession')) {
+      logger.info('Creating TelegramSession table...');
+      
+      // Create table directly (not through executeMigration to avoid transaction issues)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS "TelegramSession" (
+          "id" TEXT NOT NULL PRIMARY KEY,
+          "telegram_user_id" TEXT NOT NULL,
+          "step" TEXT NOT NULL DEFAULT 'idle',
+          "invite_token" TEXT,
+          "registration_data" TEXT,
+          "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "expires_at" DATETIME NOT NULL
+        )
+      `);
+      
+      // Create indexes
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS "TelegramSession_telegram_user_id_key" ON "TelegramSession"("telegram_user_id")`);
+      db.exec(`CREATE INDEX IF NOT EXISTS "TelegramSession_telegram_user_id_idx" ON "TelegramSession"("telegram_user_id")`);
+      db.exec(`CREATE INDEX IF NOT EXISTS "TelegramSession_expires_at_idx" ON "TelegramSession"("expires_at")`);
+      
+      logger.info('TelegramSession table created');
+    }
+
+    // Ensure SwapRequest table exists (added in later migration)
+    if (!tableExists('SwapRequest')) {
+      logger.info('Creating SwapRequest table...');
+      
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS "SwapRequest" (
+          "id" TEXT NOT NULL PRIMARY KEY,
+          "shiftId" TEXT NOT NULL,
+          "fromUserId" TEXT NOT NULL,
+          "toUserId" TEXT NOT NULL,
+          "status" TEXT NOT NULL DEFAULT 'PENDING',
+          "requestedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "respondedAt" DATETIME,
+          "approvedAt" DATETIME,
+          "approvedById" TEXT,
+          "expiresAt" DATETIME NOT NULL,
+          "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT "SwapRequest_shiftId_fkey" FOREIGN KEY ("shiftId") REFERENCES "Shift" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+          CONSTRAINT "SwapRequest_fromUserId_fkey" FOREIGN KEY ("fromUserId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+          CONSTRAINT "SwapRequest_toUserId_fkey" FOREIGN KEY ("toUserId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+          CONSTRAINT "SwapRequest_approvedById_fkey" FOREIGN KEY ("approvedById") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+        )
+      `);
+      
+      // Create indexes
+      db.exec(`CREATE INDEX IF NOT EXISTS "SwapRequest_shiftId_idx" ON "SwapRequest"("shiftId")`);
+      db.exec(`CREATE INDEX IF NOT EXISTS "SwapRequest_fromUserId_idx" ON "SwapRequest"("fromUserId")`);
+      db.exec(`CREATE INDEX IF NOT EXISTS "SwapRequest_toUserId_idx" ON "SwapRequest"("toUserId")`);
+      db.exec(`CREATE INDEX IF NOT EXISTS "SwapRequest_status_idx" ON "SwapRequest"("status")`);
+      db.exec(`CREATE INDEX IF NOT EXISTS "SwapRequest_expiresAt_idx" ON "SwapRequest"("expiresAt")`);
+      
+      logger.info('SwapRequest table created');
+    }
+    
     return;
   }
 
@@ -556,6 +618,32 @@ export async function initDatabase() {
     CREATE UNIQUE INDEX IF NOT EXISTS "TelegramSession_telegram_user_id_key" ON "TelegramSession"("telegram_user_id");
     CREATE INDEX IF NOT EXISTS "TelegramSession_telegram_user_id_idx" ON "TelegramSession"("telegram_user_id");
     CREATE INDEX IF NOT EXISTS "TelegramSession_expires_at_idx" ON "TelegramSession"("expires_at");
+
+    -- SwapRequest table (for shift swap requests)
+    CREATE TABLE IF NOT EXISTS "SwapRequest" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "shiftId" TEXT NOT NULL,
+      "fromUserId" TEXT NOT NULL,
+      "toUserId" TEXT NOT NULL,
+      "status" TEXT NOT NULL DEFAULT 'PENDING',
+      "requestedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "respondedAt" DATETIME,
+      "approvedAt" DATETIME,
+      "approvedById" TEXT,
+      "expiresAt" DATETIME NOT NULL,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "SwapRequest_shiftId_fkey" FOREIGN KEY ("shiftId") REFERENCES "Shift" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+      CONSTRAINT "SwapRequest_fromUserId_fkey" FOREIGN KEY ("fromUserId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+      CONSTRAINT "SwapRequest_toUserId_fkey" FOREIGN KEY ("toUserId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+      CONSTRAINT "SwapRequest_approvedById_fkey" FOREIGN KEY ("approvedById") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS "SwapRequest_shiftId_idx" ON "SwapRequest"("shiftId");
+    CREATE INDEX IF NOT EXISTS "SwapRequest_fromUserId_idx" ON "SwapRequest"("fromUserId");
+    CREATE INDEX IF NOT EXISTS "SwapRequest_toUserId_idx" ON "SwapRequest"("toUserId");
+    CREATE INDEX IF NOT EXISTS "SwapRequest_status_idx" ON "SwapRequest"("status");
+    CREATE INDEX IF NOT EXISTS "SwapRequest_expiresAt_idx" ON "SwapRequest"("expiresAt");
   `;
 
   executeMigration(schema);

@@ -83,6 +83,13 @@ export default function SchedulePage() {
   const [allEmployeesList, setAllEmployeesList] = useState<any[]>([]);
   const [isRestaurantManager, setIsRestaurantManager] = useState(false);
   const [userPermissions, setUserPermissions] = useState<string[]>([]);
+  
+  // Проверка права на запрос обмена сменами
+  const hasRequestShiftSwap = useMemo(() => {
+    if (!user || !selectedRestaurant) return false;
+    if (user.role === 'OWNER' || user.role === 'ADMIN') return true;
+    return userPermissions.includes('REQUEST_SHIFT_SWAP');
+  }, [user, selectedRestaurant, userPermissions]);
 
   // Шаблоны графиков
   const [scheduleTemplates, setScheduleTemplates] = useState<any[]>([]);
@@ -756,8 +763,8 @@ export default function SchedulePage() {
       return;
     }
 
-    // Если это своя смена и пользователь не имеет прав на редактирование - открываем модалку обмена
-    if (shift && isMyShift && !hasEditSchedule) {
+    // Если это своя смена и пользователь имеет право REQUEST_SHIFT_SWAP - открываем модалку обмена
+    if (shift && isMyShift && !hasEditSchedule && hasRequestShiftSwap) {
       setSelectedShiftForSwap(shift);
       setShowSwapModal(true);
       return;
@@ -1163,6 +1170,7 @@ export default function SchedulePage() {
               employeesFlat={allEmployeesList}
               user={user}
               hasEditSchedule={hasEditSchedule}
+              hasRequestShiftSwap={hasRequestShiftSwap}
               handleCellClick={handleCellClick}
               getShiftForCell={getShiftForCell}
               onDeleteEmployeeShifts={handleDeleteEmployeeShifts}
@@ -1183,6 +1191,7 @@ export default function SchedulePage() {
             isHoliday={isHoliday}
             user={user}
             hasEditSchedule={hasEditSchedule}
+            hasRequestShiftSwap={hasRequestShiftSwap}
             onEditShift={(shift) => {
               setEditingShift(shift);
               setShowEditShiftModal(true);

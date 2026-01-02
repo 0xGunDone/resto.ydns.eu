@@ -13,6 +13,7 @@ import TimesheetPage from './pages/TimesheetPage';
 import ProfilePage from './pages/ProfilePage';
 import EmployeeProfilePage from './pages/EmployeeProfilePage';
 import NotificationsPage from './pages/NotificationsPage';
+import SwapRequestsPage from './pages/SwapRequestsPage';
 import ProtectedRoute from './components/ProtectedRoute';
 
 function App() {
@@ -102,6 +103,14 @@ function App() {
           element={
             <ProtectedRoute>
               <NotificationsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/swap-requests"
+          element={
+            <ProtectedRoute>
+              <SwapRequestsPage />
             </ProtectedRoute>
           }
         />

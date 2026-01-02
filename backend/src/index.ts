@@ -67,6 +67,7 @@ import penaltyRoutes from './routes/penalties';
 import notificationRoutes from './routes/notifications';
 import pushSubscriptionRoutes from './routes/pushSubscriptions';
 import notificationSettingsRoutes from './routes/notificationSettings';
+import swapRoutes from './routes/swaps';
 
 app.use('/api/auth', authRoutes);
 app.use('/api/shifts', shiftRoutes);
@@ -93,6 +94,7 @@ app.use('/api/penalties', penaltyRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/push-subscriptions', pushSubscriptionRoutes);
 app.use('/api/notification-settings', notificationSettingsRoutes);
+app.use('/api/swaps', swapRoutes);
 
 // Endpoint для получения VAPID публичного ключа
 import { getVapidPublicKey, initializeVapid } from './utils/pushNotifications';
@@ -116,9 +118,15 @@ app.use(errorHandler);
 // Запуск Telegram бота
 import { startBot } from './telegram/bot';
 import { getTelegramSessionService } from './services/telegramSessionService';
+import { getSwapExpirationService } from './services/swapExpirationService';
 
 app.listen(PORT, async () => {
   logger.info(`Server running on http://localhost:${PORT}`);
+  
+  // Start swap expiration scheduler
+  // Requirements: 2.5 - Automatically expire swap requests after 48 hours
+  const swapExpirationService = getSwapExpirationService();
+  swapExpirationService.startExpirationScheduler();
   
   // Запускаем Telegram бота
   // Requirements: 3.1 - Load sessions from persistent storage at startup
