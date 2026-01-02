@@ -19,6 +19,7 @@ for (const envPath of envPaths) {
 import express from 'express';
 import cors from 'cors';
 import { logger } from './services/loggerService';
+import { errorHandler } from './middleware/errorHandler';
 
 // Инициализация БД
 import { initDatabase } from './utils/initDb';
@@ -108,23 +109,27 @@ app.get('/api/vapid-public-key', (req, res) => {
   }
 });
 
-// Error handling middleware
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  logger.error('Unhandled error', { error: err.message, stack: err.stack, path: req.path });
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal server error',
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
-  });
-});
+// Error handling middleware (centralized, consistent format)
+// Requirements: 8.1 - Consistent error response format
+app.use(errorHandler);
 
 // Запуск Telegram бота
 import { startBot } from './telegram/bot';
+import { getTelegramSessionService } from './services/telegramSessionService';
 
 app.listen(PORT, async () => {
   logger.info(`Server running on http://localhost:${PORT}`);
   
   // Запускаем Telegram бота
+  // Requirements: 3.1 - Load sessions from persistent storage at startup
   if (process.env.TELEGRAM_BOT_ENABLED !== 'false' && process.env.TELEGRAM_BOT_TOKEN) {
+    // Initialize session service and clean expired sessions before starting bot
+    const sessionService = getTelegramSessionService();
+    const cleanedCount = await sessionService.cleanExpiredSessions();
+    if (cleanedCount > 0) {
+      logger.info('Cleaned expired Telegram sessions at startup', { count: cleanedCount });
+    }
+    
     await startBot();
   }
 });

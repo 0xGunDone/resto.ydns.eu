@@ -424,7 +424,7 @@ async function handleInviteRegistration(ctx: MyContext): Promise<void> {
     }
 
     // Check if user is already registered
-    const existingUser = await dbClient.user.findFirst({
+    const existingUser = await (dbClient.user.findFirst as any)({
       where: { telegramId: telegramId },
       include: {
         restaurants: {
@@ -851,7 +851,7 @@ export async function startBot(): Promise<void> {
     }
 
     const telegramId = ctx.telegramUserId;
-    const user = await dbClient.user.findFirst({
+    const user = await (dbClient.user.findFirst as any)({
       where: { telegramId: telegramId },
       include: {
         restaurants: {
