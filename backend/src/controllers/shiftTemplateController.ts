@@ -3,6 +3,8 @@ import { validationResult } from 'express-validator';
 import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
+import { logger } from '../services/loggerService';
+import { isDatabaseError } from '../middleware/errorHandler';
 
 // Получение всех типов смен (если restaurantId не указан, то общие шаблоны)
 export const getShiftTemplates = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
@@ -31,8 +33,7 @@ export const getShiftTemplates = async (req: AuthRequest, res: Response, next: N
       },
     });
 
-    // Логируем для отладки
-    console.log('Shift templates query:', { restaurantId, where, count: templates.length });
+    logger.debug('Shift templates query', { restaurantId, where, count: templates.length });
 
     res.json({ templates });
   } catch (error) {
@@ -91,8 +92,8 @@ export const createShiftTemplate = async (req: AuthRequest, res: Response, next:
     });
 
     res.status(201).json({ template });
-  } catch (error: any) {
-    if (error.code === 'P2002') {
+  } catch (error: unknown) {
+    if (isDatabaseError(error) && error.code === 'P2002') {
       res.status(400).json({ error: 'Template with this name already exists' });
       return;
     }
@@ -158,8 +159,8 @@ export const updateShiftTemplate = async (req: AuthRequest, res: Response, next:
     });
 
     res.json({ template });
-  } catch (error: any) {
-    if (error.code === 'P2025') {
+  } catch (error: unknown) {
+    if (isDatabaseError(error) && error.code === 'P2025') {
       res.status(404).json({ error: 'Template not found' });
       return;
     }
@@ -228,8 +229,8 @@ export const deleteShiftTemplate = async (req: AuthRequest, res: Response, next:
     });
 
     res.json({ message: 'Template deleted successfully' });
-  } catch (error: any) {
-    if (error.code === 'P2025') {
+  } catch (error: unknown) {
+    if (isDatabaseError(error) && error.code === 'P2025') {
       res.status(404).json({ error: 'Template not found' });
       return;
     }

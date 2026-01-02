@@ -1,6 +1,7 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
+import { logger } from '../services/loggerService';
 
 const uploadsDir = path.join(process.cwd(), 'uploads');
 
@@ -9,7 +10,7 @@ const uploadsDir = path.join(process.cwd(), 'uploads');
   try {
     await fs.mkdir(uploadsDir, { recursive: true });
   } catch (error) {
-    console.error('Error creating uploads directory:', error);
+    logger.error('Error creating uploads directory', { error: error instanceof Error ? error.message : error });
   }
 })();
 

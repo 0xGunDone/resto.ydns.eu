@@ -21,6 +21,73 @@ export interface ApiErrorResponse {
 }
 
 /**
+ * Database error interface (Prisma-like errors)
+ */
+export interface DatabaseError extends Error {
+  code?: string;
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * JWT error interface
+ */
+export interface JwtError extends Error {
+  name: 'JsonWebTokenError' | 'TokenExpiredError' | 'NotBeforeError';
+  expiredAt?: Date;
+}
+
+/**
+ * Generic typed error for catch blocks
+ * Use this instead of 'any' in catch blocks
+ */
+export interface TypedError extends Error {
+  code?: string;
+  statusCode?: number;
+  status?: number;
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * Type guard to check if error is a DatabaseError
+ */
+export function isDatabaseError(error: unknown): error is DatabaseError {
+  return error instanceof Error && 'code' in error;
+}
+
+/**
+ * Type guard to check if error is a JwtError
+ */
+export function isJwtError(error: unknown): error is JwtError {
+  return error instanceof Error && 
+    (error.name === 'JsonWebTokenError' || 
+     error.name === 'TokenExpiredError' || 
+     error.name === 'NotBeforeError');
+}
+
+/**
+ * Safely extracts error message from unknown error
+ */
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  return 'Unknown error';
+}
+
+/**
+ * Safely extracts error code from unknown error
+ */
+export function getErrorCode(error: unknown): string | undefined {
+  if (error instanceof Error && 'code' in error) {
+    return (error as TypedError).code;
+  }
+  return undefined;
+}
+
+/**
  * Error codes for consistent error identification
  */
 export const ErrorCodes = {

@@ -3,6 +3,7 @@ import { validationResult } from 'express-validator';
 import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
+import { logger } from '../services/loggerService';
 
 // Получение времени смены на основе даты и шаблона (ID или название)
 const getShiftTimes = async (date: Date, templateId: string, restaurantId?: string) => {
@@ -67,7 +68,7 @@ export const createShiftsBatch = async (req: AuthRequest, res: Response, next: N
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      console.error('Validation errors in updateShift:', errors.array(), 'body:', req.body);
+      logger.warn('Validation errors in createShiftsBatch', { errors: errors.array(), body: req.body });
       res.status(400).json({ errors: errors.array() });
       return;
     }
@@ -210,7 +211,7 @@ export const createShift = async (req: AuthRequest, res: Response, next: NextFun
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      console.error('Validation errors in updateShift:', errors.array(), 'body:', req.body);
+      logger.warn('Validation errors in createShift', { errors: errors.array(), body: req.body });
       res.status(400).json({ errors: errors.array() });
       return;
     }
@@ -335,7 +336,7 @@ export const getShifts = async (req: AuthRequest, res: Response, next: NextFunct
         const startDateObj = startDateStr.includes('T')
           ? new Date(startDateStr)
           : new Date(startDateStr + 'T00:00:00.000Z');
-        console.log('Start date filter:', startDateStr, '->', startDateObj.toISOString());
+        logger.debug('Start date filter', { startDateStr, parsed: startDateObj.toISOString() });
         where.startTime.gte = startDateObj;
       }
       if (endDate) {
@@ -344,7 +345,7 @@ export const getShifts = async (req: AuthRequest, res: Response, next: NextFunct
         const endDateObj = endDateStr.includes('T')
           ? new Date(endDateStr)
           : new Date(endDateStr + 'T23:59:59.999Z');
-        console.log('End date filter:', endDateStr, '->', endDateObj.toISOString());
+        logger.debug('End date filter', { endDateStr, parsed: endDateObj.toISOString() });
         where.startTime.lte = endDateObj;
       }
     }
@@ -375,14 +376,14 @@ export const getShifts = async (req: AuthRequest, res: Response, next: NextFunct
       );
 
       if (accessibleIds.length === 0) {
-        console.log('Manager has no accessible restaurants, returning empty shifts');
+        logger.debug('Manager has no accessible restaurants, returning empty shifts');
         res.json({ shifts: [] });
         return;
       }
 
       if (restaurantId) {
         if (!accessibleIds.includes(restaurantId as string)) {
-          console.log('Manager requested foreign restaurant, returning empty shifts');
+          logger.debug('Manager requested foreign restaurant, returning empty shifts');
           res.json({ shifts: [] });
           return;
         }
@@ -406,18 +407,15 @@ export const getShifts = async (req: AuthRequest, res: Response, next: NextFunct
         },
       });
     } catch (error: any) {
-      console.error('Error in shift.findMany:', error);
-      console.error('Where clause:', JSON.stringify(where, null, 2));
-      console.error('Error details:', {
-        message: error?.message,
-        code: error?.code,
-        stack: error?.stack,
+      logger.error('Error in shift.findMany', { 
+        error: error?.message, 
+        where: JSON.stringify(where), 
+        code: error?.code 
       });
       throw error;
     }
 
-    // Логируем для отладки
-    console.log('Shifts query:', { 
+    logger.debug('Shifts query', { 
       restaurantId, 
       userId, 
       startDate, 
@@ -436,17 +434,19 @@ export const getShifts = async (req: AuthRequest, res: Response, next: NextFunct
         orderBy: { startTime: 'asc' },
         take: 20,
       });
-      console.log('All shifts in restaurant (first 20):', fallbackShifts.map(s => ({
-        id: s.id,
-        userId: s.userId,
-        startTime: s.startTime,
-        endTime: s.endTime,
-        restaurantId: s.restaurantId,
-        type: s.type,
-      })));
+      logger.debug('All shifts in restaurant (first 20)', { 
+        shifts: fallbackShifts.map(s => ({
+          id: s.id,
+          userId: s.userId,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          restaurantId: s.restaurantId,
+          type: s.type,
+        }))
+      });
 
       const totalCount = await dbClient.shift.count({ where: { restaurantId } });
-      console.log('Total shifts in restaurant:', totalCount);
+      logger.debug('Total shifts in restaurant', { totalCount });
 
       // Возвращаем fallback, чтобы пользователь увидел смены, даже если фильтр по датам не сработал
       res.json({ shifts: fallbackShifts });
@@ -454,7 +454,7 @@ export const getShifts = async (req: AuthRequest, res: Response, next: NextFunct
     }
     
     if (shifts.length > 0) {
-      console.log('First shift sample:', {
+      logger.debug('First shift sample', {
         id: shifts[0].id,
         userId: shifts[0].userId,
         startTime: shifts[0].startTime,
@@ -463,7 +463,7 @@ export const getShifts = async (req: AuthRequest, res: Response, next: NextFunct
         restaurant: shifts[0].restaurant ? { id: shifts[0].restaurant.id, name: shifts[0].restaurant.name } : null,
       });
     } else {
-      console.log('No shifts found with current filters');
+      logger.debug('No shifts found with current filters');
     }
 
     // Обогащаем данными о пользователе, которому предлагается смена
@@ -593,7 +593,7 @@ export const updateShift = async (req: AuthRequest, res: Response, next: NextFun
     if (isConfirmed !== undefined) updateData.isConfirmed = isConfirmed;
     if (isCompleted !== undefined) updateData.isCompleted = isCompleted;
 
-    console.log('Update shift payload:', {
+    logger.debug('Update shift payload', {
       id,
       body: req.body,
       updateData,
@@ -617,8 +617,7 @@ export const updateShift = async (req: AuthRequest, res: Response, next: NextFun
         },
       });
     } catch (error: any) {
-      console.error('Error updating shift in DB:', error);
-      console.error('Update data:', updateData);
+      logger.error('Error updating shift in DB', { error: error?.message, updateData });
       res.status(500).json({ error: 'Ошибка обновления смены' });
       return;
     }
@@ -1519,7 +1518,7 @@ export const getShiftSwapRequests = async (req: AuthRequest, res: Response, next
 
     res.json({ requests: enrichedRequests });
   } catch (error) {
-    console.error('[getShiftSwapRequests] Error:', error);
+    logger.error('Error in getShiftSwapRequests', { error: error instanceof Error ? error.message : error });
     next(error);
   }
 };

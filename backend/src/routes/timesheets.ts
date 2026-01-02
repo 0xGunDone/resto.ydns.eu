@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { body, query } from 'express-validator';
 import * as timesheetController from '../controllers/timesheetController';
 import { authenticate } from '../middleware/auth';
+import { logger } from '../services/loggerService';
 
 const router = Router();
 
@@ -24,7 +25,7 @@ router.post(
 router.get(
   '/earnings',
   (req, res, next) => {
-    console.log('Earnings route hit:', req.method, req.path, req.query, req.url);
+    logger.debug('Earnings route hit', { method: req.method, path: req.path, query: req.query, url: req.url });
     next();
   },
   timesheetController.getTimesheetWithEarnings

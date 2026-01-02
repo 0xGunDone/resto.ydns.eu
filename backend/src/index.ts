@@ -18,6 +18,7 @@ for (const envPath of envPaths) {
 
 import express from 'express';
 import cors from 'cors';
+import { logger } from './services/loggerService';
 
 // Инициализация БД
 import { initDatabase } from './utils/initDb';
@@ -73,7 +74,7 @@ app.use('/api/schedule-templates', scheduleTemplateRoutes);
 app.use('/api/restaurants', restaurantRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/timesheets', (req, res, next) => {
-  console.log('Timesheets route accessed:', req.method, req.path, req.url);
+  logger.debug('Timesheets route accessed', { method: req.method, path: req.path, url: req.url });
   next();
 }, timesheetRoutes);
 app.use('/api/feedback', feedbackRoutes);
@@ -109,7 +110,7 @@ app.get('/api/vapid-public-key', (req, res) => {
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error('Error:', err);
+  logger.error('Unhandled error', { error: err.message, stack: err.stack, path: req.path });
   res.status(err.status || 500).json({
     error: err.message || 'Internal server error',
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
@@ -120,7 +121,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 import { startBot } from './telegram/bot';
 
 app.listen(PORT, async () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  logger.info(`Server running on http://localhost:${PORT}`);
   
   // Запускаем Telegram бота
   if (process.env.TELEGRAM_BOT_ENABLED !== 'false' && process.env.TELEGRAM_BOT_TOKEN) {

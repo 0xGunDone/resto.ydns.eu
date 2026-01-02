@@ -3,6 +3,7 @@ import { validationResult } from 'express-validator';
 import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
+import { logger } from '../services/loggerService';
 
 // Получение всех ресторанов
 export const getRestaurants = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
@@ -53,7 +54,7 @@ export const getRestaurants = async (req: AuthRequest, res: Response, next: Next
 
     res.json({ restaurants });
   } catch (error: any) {
-    console.error('Error in getRestaurants:', error);
+    logger.error('Error in getRestaurants', { error: error?.message });
     res.status(200).json({ restaurants: [], error: 'Ошибка загрузки ресторанов' });
   }
 };

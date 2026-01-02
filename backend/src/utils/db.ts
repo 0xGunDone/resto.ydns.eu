@@ -1,7 +1,13 @@
-// @ts-ignore - Ignoring TypeScript errors for dbClient compatibility
+/**
+ * Database Client
+ * 
+ * This module provides a Prisma-like API for SQLite using better-sqlite3.
+ * The dbClient object mimics Prisma's interface for easier migration if needed.
+ */
 import Database from 'better-sqlite3';
 import path from 'path';
 import { randomBytes } from 'crypto';
+import { logger } from '../services/loggerService';
 
 // Генерация CUID-подобного ID
 function generateId(): string {
@@ -483,22 +489,22 @@ function createModelMethods(tableName: string) {
 
       // Логируем для отладки
       if (tableName === 'Task') {
-        console.log('Task update SQL:', finalSql);
-        console.log('Task update params:', finalParams);
-        console.log('Update data:', data);
-        console.log('Fields with params:', fieldsWithParams);
-        console.log('Null fields:', nullFields);
-        console.log('Set clause:', finalSetClause);
-        console.log('Update params count:', finalUpdateParams.length);
-        console.log('Where params count:', whereParams.length);
+        logger.debug('Task update SQL', { 
+          sql: finalSql, 
+          params: finalParams, 
+          data, 
+          fieldsWithParams, 
+          nullFields, 
+          setClause: finalSetClause,
+          updateParamsCount: finalUpdateParams.length,
+          whereParamsCount: whereParams.length
+        });
       }
 
       try {
         sqliteConnection.prepare(finalSql).run(...finalParams);
       } catch (error: any) {
-        console.error(`Error updating ${tableName}:`, error);
-        console.error('SQL:', finalSql);
-        console.error('Params:', finalParams);
+        logger.error(`Error updating ${tableName}`, { error: error?.message, sql: finalSql, params: finalParams });
         throw error;
       }
 
@@ -988,9 +994,7 @@ export const dbClient = {
       const { where = {}, select, include } = args;
       const { sql: whereSql, params } = buildWhereClause(where);
       const result = sqliteConnection.prepare(`SELECT * FROM RestaurantUser ${whereSql} LIMIT 1`).get(...params) as any;
-      console.log('=== FIND FIRST RESULT ===');
-      console.log('Raw result from DB:', result);
-      console.log('========================');
+      logger.debug('RestaurantUser findFirst result', { rawResult: result });
       if (!result) return null;
       
       // Конвертируем boolean поля
@@ -1203,13 +1207,13 @@ export const dbClient = {
       const finalSql = `UPDATE RestaurantUser SET ${finalSetClause} ${whereSql}`;
       const allParams = [...finalUpdateParams, ...whereParams];
       
-      console.log('=== UPDATE SQL DEBUG ===');
-      console.log('SQL:', finalSql);
-      console.log('AllParams:', allParams);
-      console.log('UpdateFields:', updateFields);
-      console.log('SetClause:', setClause);
-      console.log('FinalSetClause:', finalSetClause);
-      console.log('======================');
+      logger.debug('RestaurantUser update SQL', { 
+        sql: finalSql, 
+        allParams, 
+        updateFields, 
+        setClause, 
+        finalSetClause 
+      });
       
       sqliteConnection.prepare(finalSql).run(...allParams);
 

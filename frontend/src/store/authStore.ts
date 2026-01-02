@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { clearPermissionsCache } from '../utils/permissionsCache';
 
 interface User {
   id: string;
@@ -33,6 +34,8 @@ export const useAuthStore = create<AuthState>()(
         set({ user });
       },
       logout: () => {
+        // Очищаем кэш прав доступа при logout (Requirements 9.5)
+        clearPermissionsCache();
         set({ user: null, accessToken: null, refreshToken: null });
       },
       isAuthenticated: () => {

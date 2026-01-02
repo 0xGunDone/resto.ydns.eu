@@ -1,4 +1,5 @@
 import dbClient from './db';
+import { logger } from '../services/loggerService';
 
 export type NotificationType =
   | 'TASK_ASSIGNED'
@@ -58,15 +59,15 @@ export async function createNotification(params: CreateNotificationParams): Prom
         },
       }).catch((err) => {
         // Игнорируем ошибки push-уведомлений, чтобы не блокировать создание основного уведомления
-        console.error('Error sending push notification:', err);
+        logger.error('Error sending push notification', { error: err instanceof Error ? err.message : err });
       });
     } catch (pushError) {
       // Игнорируем ошибки загрузки модуля push-уведомлений
-      console.error('Error importing pushNotifications:', pushError);
+      logger.error('Error importing pushNotifications', { error: pushError instanceof Error ? pushError.message : pushError });
     }
   } catch (error) {
     // Не прерываем выполнение основного процесса при ошибке создания уведомления
-    console.error('Error creating notification:', error);
+    logger.error('Error creating notification', { error: error instanceof Error ? error.message : error });
   }
 }
 

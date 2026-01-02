@@ -6,6 +6,7 @@ import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '.
 import { generateTwoFactorSecret, verifyTwoFactorToken } from '../utils/twoFactor';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
+import { isJwtError, isDatabaseError, getErrorMessage } from '../middleware/errorHandler';
 // Константы для ролей и типов действий (SQLite не поддерживает enum)
 const UserRole = {
   OWNER: 'OWNER',
@@ -268,8 +269,8 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
       accessToken,
       refreshToken: newRefreshToken,
     });
-  } catch (error: any) {
-    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+  } catch (error: unknown) {
+    if (isJwtError(error)) {
       res.status(401).json({ error: 'Invalid or expired refresh token' });
       return;
     }
@@ -530,8 +531,8 @@ export const updateProfile = async (req: AuthRequest, res: Response, next: NextF
       message: 'Profile updated successfully',
       user: updatedUser,
     });
-  } catch (error: any) {
-    if (error.code === 'P2002') {
+  } catch (error: unknown) {
+    if (isDatabaseError(error) && error.code === 'P2002') {
       res.status(400).json({ error: 'Email already in use' });
       return;
     }

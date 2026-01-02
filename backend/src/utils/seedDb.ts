@@ -1,8 +1,9 @@
 import { hashPassword } from './bcrypt';
 import dbClient from './db';
+import { logger } from '../services/loggerService';
 
 export async function seedDatabase() {
-  console.log('🌱 Seeding database...');
+  logger.info('Seeding database...');
 
   // Создаем admin пользователя
   const adminEmail = process.env.ADMIN_EMAIL || 'admin@resto.local';
@@ -27,10 +28,10 @@ export async function seedDatabase() {
       },
     });
 
-    console.log(`✅ Admin user created: ${adminEmail}`);
+    logger.info(`Admin user created: ${adminEmail}`);
   } else {
-    console.log(`ℹ️ Admin user already exists: ${adminEmail}`);
+    logger.info(`Admin user already exists: ${adminEmail}`);
   }
 
-  console.log('✅ Database seeding completed');
+  logger.info('Database seeding completed');
 }

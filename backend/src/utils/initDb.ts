@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { seedDatabase } from './seedDb';
+import { logger } from '../services/loggerService';
 
 const dbPath = process.env.DATABASE_URL?.replace('file:', '') || path.join(__dirname, '../../dev.db');
 const db = new Database(dbPath);
@@ -30,7 +31,7 @@ function executeMigration(sql: string) {
         } catch (error: any) {
           // Игнорируем ошибки если таблица уже существует или индекс уже существует
           if (!error.message.includes('already exists') && !error.message.includes('duplicate')) {
-            console.warn(`Warning executing: ${trimmed.substring(0, 50)}...`, error.message);
+            logger.warn(`Warning executing SQL: ${trimmed.substring(0, 50)}...`, { error: error.message });
           }
         }
       }
@@ -40,15 +41,15 @@ function executeMigration(sql: string) {
 }
 
 export async function initDatabase() {
-  console.log('🔧 Инициализация базы данных...');
+  logger.info('Initializing database...');
 
   // Если таблица User уже существует, считаем что БД инициализирована
   if (tableExists('User')) {
-    console.log('✅ База данных уже инициализирована');
+    logger.info('Database already initialized');
     return;
   }
 
-  console.log('📦 Создание таблиц...');
+  logger.info('Creating tables...');
 
   // Создаем все таблицы базы данных
   const schema = `
@@ -558,7 +559,7 @@ export async function initDatabase() {
   `;
 
   executeMigration(schema);
-  console.log('✅ База данных успешно инициализирована');
+  logger.info('Database successfully initialized');
   
   // Заполняем базу данных начальными данными
   await seedDatabase();

@@ -253,41 +253,41 @@
   - Проверить property test 9 (VIEW_OWN vs VIEW_ALL filtering)
   - Ensure all tests pass, ask the user if questions arise.
 
-- [-] 13. Рефакторинг фронтенд хуков
-  - [-] 13.1 Добавить кэширование в usePermissions
+- [x] 13. Рефакторинг фронтенд хуков
+  - [x] 13.1 Добавить кэширование в usePermissions
     - Добавить Map для кэша по restaurantId
     - Инвалидировать при смене restaurantId
     - _Requirements: 9.1, 9.2_
 
-  - [ ] 13.2 Написать property test для Permission Cache Invalidation
+  - [x] 13.2 Написать property test для Permission Cache Invalidation
     - **Property 18: Permission Cache Invalidation**
     - **Validates: Requirements 9.1, 9.2**
 
-  - [ ] 13.3 Добавить очистку кэша при logout
+  - [x] 13.3 Добавить очистку кэша при logout
     - Очищать кэш в usePermissions при logout
     - Очищать кэш в useGlobalPermissions при logout
     - _Requirements: 9.5_
 
-  - [ ] 13.4 Написать property test для Logout Cache Clearing
+  - [x] 13.4 Написать property test для Logout Cache Clearing
     - **Property 19: Logout Cache Clearing**
     - **Validates: Requirements 9.5**
 
-  - [ ] 13.5 Оптимизировать useGlobalPermissions
+  - [x] 13.5 Оптимизировать useGlobalPermissions
     - Загружать права для всех ресторанов параллельно (Promise.all)
     - _Requirements: 9.3_
 
-- [ ] 14. Удаление отладочного кода
-  - [ ] 14.1 Удалить console.log из backend
+- [x] 14. Удаление отладочного кода
+  - [x] 14.1 Удалить console.log из backend
     - Найти и удалить все console.log для отладки
     - Заменить на logger где нужно логирование
     - _Requirements: 7.1_
 
-  - [ ] 14.2 Удалить @ts-ignore комментарии
+  - [x] 14.2 Удалить @ts-ignore комментарии
     - Исправить типы вместо игнорирования
     - Документировать если @ts-ignore необходим
     - _Requirements: 2.3_
 
-  - [ ] 14.3 Заменить 'any' на конкретные типы
+  - [x] 14.3 Заменить 'any' на конкретные типы
     - Найти использования 'any' в error handlers
     - Заменить на типизированные ошибки
     - _Requirements: 2.4_

@@ -1,11 +1,23 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuthStore } from '../store/authStore';
 import api from '../utils/api';
+import {
+  permissionsCache,
+  getGlobalPermissionsCache,
+  setGlobalPermissionsCache,
+  isCacheValid,
+  clearPermissionsCache,
+  invalidateRestaurantCache,
+} from '../utils/permissionsCache';
+
+// Re-export cache functions for convenience
+export { clearPermissionsCache, invalidateRestaurantCache };
 
 export function usePermissions(restaurantId?: string | null) {
   const { user } = useAuthStore();
   const [permissions, setPermissions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const previousRestaurantIdRef = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     const loadPermissions = async () => {
@@ -15,11 +27,33 @@ export function usePermissions(restaurantId?: string | null) {
         return;
       }
 
+      // Проверяем, изменился ли restaurantId (для инвалидации)
+      const restaurantIdChanged = previousRestaurantIdRef.current !== undefined && 
+                                   previousRestaurantIdRef.current !== restaurantId;
+      previousRestaurantIdRef.current = restaurantId;
+
+      // Проверяем кэш
+      const cached = permissionsCache.get(restaurantId);
+      if (cached && isCacheValid(cached.timestamp) && !restaurantIdChanged) {
+        setPermissions(cached.permissions);
+        setLoading(false);
+        return;
+      }
+
       try {
+        setLoading(true);
         const response = await api.get(`/permissions/user/${user.id}`, {
           params: { restaurantId },
         });
-        setPermissions(response.data.permissions || []);
+        const loadedPermissions = response.data.permissions || [];
+        
+        // Сохраняем в кэш
+        permissionsCache.set(restaurantId, {
+          permissions: loadedPermissions,
+          timestamp: Date.now(),
+        });
+        
+        setPermissions(loadedPermissions);
       } catch (error: any) {
         console.error('Ошибка загрузки прав:', error);
         setPermissions([]);
@@ -31,15 +65,15 @@ export function usePermissions(restaurantId?: string | null) {
     loadPermissions();
   }, [user, restaurantId]);
 
-  const hasPermission = (permission: string) => {
+  const hasPermission = useCallback((permission: string) => {
     if (!user) return false;
     if (user.role === 'OWNER' || user.role === 'ADMIN') return true;
     return permissions.includes(permission);
-  };
+  }, [user, permissions]);
 
-  const hasAnyPermission = (permissionList: string[]) => {
+  const hasAnyPermission = useCallback((permissionList: string[]) => {
     return permissionList.some((perm) => hasPermission(perm));
-  };
+  }, [hasPermission]);
 
   return { permissions, loading, hasPermission, hasAnyPermission };
 }
@@ -85,7 +119,21 @@ export function useGlobalPermissions() {
         return;
       }
 
+      // Проверяем глобальный кэш
+      const globalCache = getGlobalPermissionsCache();
+      if (
+        globalCache &&
+        globalCache.userId === user.id &&
+        isCacheValid(globalCache.timestamp)
+      ) {
+        setPermissionsMap(globalCache.permissionsMap);
+        setLoading(false);
+        return;
+      }
+
       try {
+        setLoading(true);
+        
         // Получаем список ресторанов пользователя
         const restaurantsRes = await api.get('/restaurants');
         const restaurants = restaurantsRes.data.restaurants || [];
@@ -96,7 +144,7 @@ export function useGlobalPermissions() {
           return;
         }
 
-        // Загружаем права для каждого ресторана
+        // Загружаем права для всех ресторанов параллельно (Promise.all) - Requirements 9.3
         const permissionsPromises = restaurants.map(async (restaurant: any) => {
           try {
             const response = await api.get(`/permissions/user/${user.id}`, {
@@ -119,6 +167,12 @@ export function useGlobalPermissions() {
 
         permissionsResults.forEach((result) => {
           map[result.restaurantId] = result.permissions;
+          
+          // Также обновляем кэш для usePermissions
+          permissionsCache.set(result.restaurantId, {
+            permissions: result.permissions,
+            timestamp: Date.now(),
+          });
         });
 
         // Также создаем объединенный список прав из всех ресторанов
@@ -127,6 +181,13 @@ export function useGlobalPermissions() {
           result.permissions.forEach((perm: string) => allPermissionsSet.add(perm));
         });
         map['global'] = Array.from(allPermissionsSet);
+
+        // Сохраняем в глобальный кэш
+        setGlobalPermissionsCache({
+          permissionsMap: map,
+          timestamp: Date.now(),
+          userId: user.id,
+        });
 
         setPermissionsMap(map);
       } catch (error: any) {
@@ -140,18 +201,17 @@ export function useGlobalPermissions() {
     loadAllPermissions();
   }, [user]);
 
-  const hasPermission = (permission: string) => {
+  const hasPermission = useCallback((permission: string) => {
     if (!user) return false;
     if (user.role === 'OWNER' || user.role === 'ADMIN') return true;
     
     // Проверяем объединенные права из всех ресторанов
     return permissionsMap['global']?.includes(permission) || false;
-  };
+  }, [user, permissionsMap]);
 
-  const hasAnyPermission = (permissionList: string[]) => {
+  const hasAnyPermission = useCallback((permissionList: string[]) => {
     return permissionList.some((perm) => hasPermission(perm));
-  };
+  }, [hasPermission]);
 
   return { permissionsMap, loading, hasPermission, hasAnyPermission };
 }
-

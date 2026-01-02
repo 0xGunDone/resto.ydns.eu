@@ -12,6 +12,7 @@ import { logAction } from '../utils/actionLog';
 import { hashPassword } from '../utils/bcrypt';
 import { logger } from '../services/loggerService';
 import { getEmployeeService } from '../services/employeeService';
+import { getErrorMessage, isDatabaseError } from '../middleware/errorHandler';
 
 const employeeService = getEmployeeService();
 
@@ -109,22 +110,25 @@ export const createEmployee = async (req: AuthRequest, res: Response, next: Next
     });
 
     res.status(201).json({ employee });
-  } catch (error: any) {
-    logger.error('Error creating employee', { error: error.message });
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error);
+    logger.error('Error creating employee', { error: errorMessage });
     
-    if (error.message === 'Пользователь с таким логином уже существует') {
-      res.status(400).json({ error: error.message });
+    if (errorMessage === 'Пользователь с таким логином уже существует') {
+      res.status(400).json({ error: errorMessage });
       return;
     }
-    if (error.code === 'P2002') {
-      res.status(400).json({ error: 'Employee already exists in this restaurant' });
-      return;
+    if (isDatabaseError(error)) {
+      if (error.code === 'P2002') {
+        res.status(400).json({ error: 'Employee already exists in this restaurant' });
+        return;
+      }
+      if (error.code === 'P2003') {
+        res.status(400).json({ error: 'Invalid position or department ID' });
+        return;
+      }
     }
-    if (error.code === 'P2003') {
-      res.status(400).json({ error: 'Invalid position or department ID' });
-      return;
-    }
-    res.status(500).json({ error: error.message || 'Error creating employee' });
+    res.status(500).json({ error: errorMessage || 'Error creating employee' });
   }
 };
 
@@ -180,14 +184,15 @@ export const updateEmployee = async (req: AuthRequest, res: Response, next: Next
 
     logger.debug('Employee updated successfully', { employeeId: employee.id });
     res.json({ employee });
-  } catch (error: any) {
-    if (error.message === 'Employee not found') {
-      res.status(404).json({ error: error.message });
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error);
+    if (errorMessage === 'Employee not found') {
+      res.status(404).json({ error: errorMessage });
       return;
     }
-    if (error.message === 'Email уже используется другим пользователем' ||
-        error.message === 'Пароль должен быть не менее 6 символов') {
-      res.status(400).json({ error: error.message });
+    if (errorMessage === 'Email уже используется другим пользователем' ||
+        errorMessage === 'Пароль должен быть не менее 6 символов') {
+      res.status(400).json({ error: errorMessage });
       return;
     }
     next(error);
@@ -230,9 +235,10 @@ export const removeEmployee = async (req: AuthRequest, res: Response, next: Next
     });
 
     res.json({ message: 'Employee removed successfully' });
-  } catch (error: any) {
-    if (error.message === 'Employee not found') {
-      res.status(404).json({ error: error.message });
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error);
+    if (errorMessage === 'Employee not found') {
+      res.status(404).json({ error: errorMessage });
       return;
     }
     next(error);
@@ -258,17 +264,18 @@ export const getEmployeeExtendedProfile = async (req: AuthRequest, res: Response
     );
 
     res.json(profile);
-  } catch (error: any) {
-    if (error.message === 'restaurantId is required') {
-      res.status(400).json({ error: error.message });
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error);
+    if (errorMessage === 'restaurantId is required') {
+      res.status(400).json({ error: errorMessage });
       return;
     }
-    if (error.message === 'Forbidden') {
-      res.status(403).json({ error: error.message });
+    if (errorMessage === 'Forbidden') {
+      res.status(403).json({ error: errorMessage });
       return;
     }
-    if (error.message === 'User not found') {
-      res.status(404).json({ error: error.message });
+    if (errorMessage === 'User not found') {
+      res.status(404).json({ error: errorMessage });
       return;
     }
     next(error);

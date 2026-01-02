@@ -1,4 +1,5 @@
 import dbClient from './db';
+import { logger } from '../services/loggerService';
 
 // Типы действий (SQLite не поддерживает enum)
 export type ActionLogType = 'CREATE' | 'UPDATE' | 'DELETE' | 'LOGIN' | 'LOGOUT' | 'APPROVE' | 'REJECT' | 'COMPLETE';
@@ -30,7 +31,7 @@ export const logAction = async (params: LogActionParams): Promise<void> => {
     });
   } catch (error) {
     // Логируем ошибку, но не прерываем выполнение основного процесса
-    console.error('Failed to log action:', error);
+    logger.error('Failed to log action', { error: error instanceof Error ? error.message : error });
   }
 };
 

@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import dbClient from '../utils/db';
 import { AuthRequest } from '../middleware/auth';
+import { logger } from '../services/loggerService';
 
 // Получение всех уведомлений пользователя
 export const getNotifications = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
@@ -30,12 +31,10 @@ export const getNotifications = async (req: AuthRequest, res: Response, next: Ne
         take: parseInt(limit as string),
       });
     } catch (error: any) {
-      console.error('Error in notification.findMany:', error);
-      console.error('Where clause:', JSON.stringify(where, null, 2));
-      console.error('Error details:', {
-        message: error?.message,
-        code: error?.code,
-        stack: error?.stack,
+      logger.error('Error in notification.findMany', { 
+        error: error?.message, 
+        where: JSON.stringify(where), 
+        code: error?.code 
       });
       throw error;
     }
@@ -50,7 +49,7 @@ export const getNotifications = async (req: AuthRequest, res: Response, next: Ne
         },
       });
     } catch (error: any) {
-      console.error('Error in notification.count:', error);
+      logger.error('Error in notification.count', { error: error?.message });
       // Не прерываем выполнение, просто используем 0
     }
 
@@ -59,12 +58,10 @@ export const getNotifications = async (req: AuthRequest, res: Response, next: Ne
       unreadCount: unreadCount || 0,
     });
   } catch (error: any) {
-    console.error('Error in getNotifications:', error);
-    console.error('Error details:', {
-      message: error?.message,
-      code: error?.code,
-      meta: error?.meta,
-      stack: error?.stack,
+    logger.error('Error in getNotifications', { 
+      error: error?.message, 
+      code: error?.code, 
+      meta: error?.meta 
     });
     res.status(500).json({ 
       error: 'Ошибка загрузки уведомлений',

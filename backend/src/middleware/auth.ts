@@ -12,7 +12,7 @@ import {
   PermissionCode,
   PERMISSIONS 
 } from '../services/permissionService';
-import { AppError, ErrorCodes } from './errorHandler';
+import { AppError, ErrorCodes, isJwtError } from './errorHandler';
 import { logger } from '../services/loggerService';
 
 export interface AuthRequest extends Request {
@@ -52,9 +52,9 @@ export const authenticate = async (
     let payload: TokenPayload;
     try {
       payload = verifyAccessToken(token);
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Handle invalid or expired token
-      const isExpired = error.name === 'TokenExpiredError';
+      const isExpired = isJwtError(error) && error.name === 'TokenExpiredError';
       const response = {
         status: 401,
         code: isExpired ? ErrorCodes.AUTH_TOKEN_EXPIRED : ErrorCodes.AUTH_TOKEN_INVALID,

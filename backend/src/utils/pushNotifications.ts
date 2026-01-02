@@ -1,5 +1,6 @@
 import webpush from 'web-push';
 import dbClient from './db';
+import { logger } from '../services/loggerService';
 
 // Ленивая инициализация VAPID ключей
 let vapidInitialized = false;
@@ -15,7 +16,7 @@ export function initializeVapid() {
     webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
     vapidInitialized = true;
   } else {
-    console.warn('⚠️  VAPID keys not configured. Push notifications will not work.');
+    logger.warn('VAPID keys not configured. Push notifications will not work.');
   }
 }
 
@@ -93,13 +94,13 @@ export async function sendPushNotification(
             data: { isActive: false },
           });
         }
-        console.error('Error sending push notification:', error);
+        logger.error('Error sending push notification', { error: error?.message, statusCode: error?.statusCode });
       }
     });
 
     await Promise.allSettled(promises);
   } catch (error) {
-    console.error('Error in sendPushNotification:', error);
+    logger.error('Error in sendPushNotification', { error: error instanceof Error ? error.message : error });
   }
 }
 
@@ -146,7 +147,7 @@ export async function sendPushNotificationByType(
     // Отправляем уведомление
     await sendPushNotification(userId, payload);
   } catch (error) {
-    console.error('Error in sendPushNotificationByType:', error);
+    logger.error('Error in sendPushNotificationByType', { error: error instanceof Error ? error.message : error });
   }
 }
 
