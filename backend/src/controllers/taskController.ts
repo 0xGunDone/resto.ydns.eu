@@ -1,11 +1,29 @@
-import { Request, Response, NextFunction } from 'express';
+/**
+ * Task Controller
+ * HTTP request handling for task operations
+ * 
+ * Requirements: 4.1, 4.2, 10.2
+ */
+
+import { Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
-import prisma from '../utils/prisma';
-import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
+import { logAction } from '../utils/actionLog';
+import { logger } from '../services/loggerService';
+import {
+  getTaskService,
+  CreateTaskData,
+  UpdateTaskData,
+} from '../services/taskService';
+import dbClient from '../utils/db';
 import fs from 'fs/promises';
 
-// Получение списка задач с фильтрами
+const taskService = getTaskService();
+
+/**
+ * Get tasks with filters
+ * Uses Task Service for permission-based filtering
+ */
 export const getTasks = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     if (!req.user) {
@@ -15,114 +33,13 @@ export const getTasks = async (req: AuthRequest, res: Response, next: NextFuncti
 
     const { restaurantId, status, category, assignedToId, createdById, search } = req.query;
 
-    const where: any = {};
-
-    if (restaurantId) {
-      where.restaurantId = restaurantId as string;
-    }
-
-    if (status) {
-      where.status = status as string;
-    }
-
-    if (category) {
-      where.category = category as string;
-    }
-
-    if (assignedToId) {
-      where.assignedToId = assignedToId as string;
-    }
-
-    if (createdById) {
-      where.createdById = createdById as string;
-    }
-
-    // Проверяем права доступа для фильтрации задач
-    let userTaskFilter: any[] = [];
-    if (req.user.role !== 'OWNER' && req.user.role !== 'ADMIN') {
-      const { checkPermission } = await import('../utils/checkPermissions');
-      const { PERMISSIONS } = await import('../utils/permissions');
-      
-      if (restaurantId) {
-        const hasViewAll = await checkPermission(req.user.id, restaurantId as string, PERMISSIONS.VIEW_ALL_TASKS);
-        const hasViewOwn = await checkPermission(req.user.id, restaurantId as string, PERMISSIONS.VIEW_OWN_TASKS);
-        
-        // Если есть только VIEW_OWN, показываем только свои задачи
-        if (!hasViewAll && hasViewOwn) {
-          userTaskFilter = [
-            { assignedToId: req.user.id },
-            { createdById: req.user.id },
-          ];
-        } else if (!hasViewAll && !hasViewOwn) {
-          // Нет прав вообще - возвращаем пустой список
-          res.json({ tasks: [] });
-          return;
-        }
-        // Если есть VIEW_ALL - показываем все задачи ресторана (фильтр не применяется)
-      }
-    }
-
-    // Объединяем фильтры поиска и прав доступа
-    const orConditions: any[] = [];
-    
-    if (search) {
-      orConditions.push(
-        { title: { contains: search as string } },
-        { description: { contains: search as string } }
-      );
-    }
-
-    // Если есть фильтр по правам доступа, объединяем с поиском
-    if (userTaskFilter.length > 0) {
-      if (orConditions.length > 0) {
-        // Если есть и поиск, и фильтр по правам - используем AND с OR внутри
-        where.AND = [
-          {
-            OR: userTaskFilter,
-          },
-          {
-            OR: orConditions,
-          },
-        ];
-      } else {
-        // Только фильтр по правам
-        where.OR = userTaskFilter;
-      }
-    } else if (orConditions.length > 0) {
-      // Только поиск
-      where.OR = orConditions;
-    }
-
-    const tasks = await prisma.task.findMany({
-      where,
-      include: {
-        createdBy: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        assignedTo: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        attachments: true,
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
+    const tasks = await taskService.getTasks(req.user.id, req.user.role, {
+      restaurantId: restaurantId as string | undefined,
+      status: status as string | undefined,
+      category: category as string | undefined,
+      assignedToId: assignedToId as string | undefined,
+      createdById: createdById as string | undefined,
+      search: search as string | undefined,
     });
 
     res.json({ tasks });
@@ -131,7 +48,9 @@ export const getTasks = async (req: AuthRequest, res: Response, next: NextFuncti
   }
 };
 
-// Получение задачи по ID
+/**
+ * Get a single task by ID
+ */
 export const getTask = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     if (!req.user) {
@@ -141,89 +60,27 @@ export const getTask = async (req: AuthRequest, res: Response, next: NextFunctio
 
     const { id } = req.params;
 
-    const task = await prisma.task.findUnique({
-      where: { id },
-      include: {
-        createdBy: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        assignedTo: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        attachments: true,
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        actionLogs: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-              },
-            },
-          },
-          orderBy: {
-            createdAt: 'desc',
-          },
-          take: 20,
-        },
-      },
-    });
+    const result = await taskService.getTaskById(id, req.user.id, req.user.role);
 
-    if (!task) {
-      res.status(404).json({ error: 'Task not found' });
+    if (result.error) {
+      res.status(result.statusCode || 500).json({ error: result.error });
       return;
     }
 
-    // Проверка прав доступа
-    if (req.user.role !== 'OWNER' && req.user.role !== 'ADMIN') {
-      const { checkPermission } = await import('../utils/checkPermissions');
-      const { PERMISSIONS } = await import('../utils/permissions');
-      
-      const hasViewAll = await checkPermission(req.user.id, task.restaurantId, PERMISSIONS.VIEW_ALL_TASKS);
-      const hasViewOwn = await checkPermission(req.user.id, task.restaurantId, PERMISSIONS.VIEW_OWN_TASKS);
-      
-      if (!hasViewAll && !hasViewOwn) {
-        res.status(403).json({ error: 'Forbidden: No permission to view tasks' });
-        return;
-      }
-      
-      // Если есть только VIEW_OWN, проверяем что задача принадлежит пользователю
-      if (!hasViewAll && hasViewOwn) {
-        if (task.assignedToId !== req.user.id && task.createdById !== req.user.id) {
-          res.status(403).json({ error: 'Forbidden: Can only view own tasks' });
-          return;
-        }
-      }
-    }
-
-    res.json({ task });
+    res.json({ task: result.task });
   } catch (error) {
     next(error);
   }
 };
 
-// Создание задачи
+/**
+ * Create a new task
+ */
 export const createTask = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      console.error('updateTask validation errors:', errors.array());
+      logger.warn('createTask validation errors', { errors: errors.array() });
       res.status(400).json({ errors: errors.array() });
       return;
     }
@@ -235,39 +92,20 @@ export const createTask = async (req: AuthRequest, res: Response, next: NextFunc
 
     const { restaurantId, assignedToId, title, description, category, status, dueDate, isRecurring, recurringRule } = req.body;
 
-    const task = await prisma.task.create({
-      data: {
-        restaurantId,
-        createdById: req.user.id,
-        assignedToId: assignedToId || null,
-        title,
-        description: description || null,
-        category: category || 'ADMIN',
-        status: status || 'NEW',
-        dueDate: dueDate ? new Date(dueDate) : null,
-        isRecurring: isRecurring || false,
-        recurringRule: recurringRule || null,
-      },
-      include: {
-        createdBy: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        assignedTo: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        attachments: true,
-      },
-    });
+    const taskData: CreateTaskData = {
+      restaurantId,
+      createdById: req.user.id,
+      title,
+      description: description || null,
+      category: category || 'ADMIN',
+      status: status || 'NEW',
+      assignedToId: assignedToId || null,
+      dueDate: dueDate ? new Date(dueDate) : null,
+      isRecurring: isRecurring || false,
+      recurringRule: recurringRule || null,
+    };
+
+    const task = await taskService.createTask(taskData);
 
     await logAction({
       userId: req.user.id,
@@ -279,10 +117,12 @@ export const createTask = async (req: AuthRequest, res: Response, next: NextFunc
       userAgent: req.get('user-agent'),
     });
 
-    // Создаем уведомление, если задача назначена на кого-то
+    // Create notification if task is assigned to someone else
     if (task.assignedToId && task.assignedToId !== req.user.id) {
       const { notifyTaskAssigned } = await import('../utils/notifications');
-      const creatorName = `${task.createdBy.firstName} ${task.createdBy.lastName}`;
+      const creatorName = task.createdBy 
+        ? `${task.createdBy.firstName} ${task.createdBy.lastName}`
+        : 'Unknown';
       await notifyTaskAssigned(
         task.assignedToId,
         task.id,
@@ -293,17 +133,19 @@ export const createTask = async (req: AuthRequest, res: Response, next: NextFunc
 
     res.status(201).json({ task });
   } catch (error) {
-    console.error('updateTask error:', error);
+    logger.error('createTask error', { error: (error as Error).message });
     next(error);
   }
 };
 
-// Обновление задачи
+/**
+ * Update an existing task
+ */
 export const updateTask = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      console.error('updateTask validation errors:', errors.array(), 'body:', req.body);
+      logger.warn('updateTask validation errors', { errors: errors.array(), body: req.body });
       res.status(400).json({ errors: errors.array() });
       return;
     }
@@ -314,68 +156,36 @@ export const updateTask = async (req: AuthRequest, res: Response, next: NextFunc
     }
 
     const { id } = req.params;
-    const { assignedToId, title, description, category, status, dueDate, isRecurring, recurringRule } = req.body;
 
-    const existingTask = await prisma.task.findUnique({
-      where: { id },
-    });
-
-    if (!existingTask) {
-      res.status(404).json({ error: 'Task not found' });
+    // Get existing task to check permissions
+    const existingResult = await taskService.getTaskById(id, req.user.id, req.user.role);
+    
+    if (existingResult.error) {
+      res.status(existingResult.statusCode || 500).json({ error: existingResult.error });
       return;
     }
 
-    // Проверка прав: только создатель, назначенный или менеджер могут редактировать
-    const canEdit =
-      existingTask.createdById === req.user.id ||
-      existingTask.assignedToId === req.user.id ||
-      ['OWNER', 'ADMIN', 'MANAGER'].includes(req.user.role);
+    const existingTask = existingResult.task!;
 
-    if (!canEdit) {
+    // Check edit permission
+    if (!taskService.canEditTask(existingTask, req.user.id, req.user.role)) {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
 
-    const updateData: any = {};
+    const { assignedToId, title, description, category, status, dueDate, isRecurring, recurringRule } = req.body;
+
+    const updateData: UpdateTaskData = {};
     if (assignedToId !== undefined) updateData.assignedToId = assignedToId;
     if (title !== undefined) updateData.title = title;
     if (description !== undefined) updateData.description = description;
     if (category !== undefined) updateData.category = category;
-    if (status !== undefined) {
-      updateData.status = status;
-      if (status === 'DONE' && existingTask.status !== 'DONE') {
-        updateData.completedAt = new Date();
-      } else if (status !== 'DONE') {
-        updateData.completedAt = null;
-      }
-    }
+    if (status !== undefined) updateData.status = status;
     if (dueDate !== undefined) updateData.dueDate = dueDate ? new Date(dueDate) : null;
     if (isRecurring !== undefined) updateData.isRecurring = isRecurring;
     if (recurringRule !== undefined) updateData.recurringRule = recurringRule;
 
-    const task = await prisma.task.update({
-      where: { id },
-      data: updateData,
-      include: {
-        createdBy: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        assignedTo: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        attachments: true,
-      },
-    });
+    const task = await taskService.updateTask(id, updateData);
 
     await logAction({
       userId: req.user.id,
@@ -393,7 +203,9 @@ export const updateTask = async (req: AuthRequest, res: Response, next: NextFunc
   }
 };
 
-// Удаление задачи
+/**
+ * Delete a task
+ */
 export const deleteTask = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     if (!req.user) {
@@ -403,25 +215,24 @@ export const deleteTask = async (req: AuthRequest, res: Response, next: NextFunc
 
     const { id } = req.params;
 
-    const task = await prisma.task.findUnique({
-      where: { id },
-    });
-
-    if (!task) {
-      res.status(404).json({ error: 'Task not found' });
+    // Get existing task to check permissions
+    const existingResult = await taskService.getTaskById(id, req.user.id, req.user.role);
+    
+    if (existingResult.error) {
+      res.status(existingResult.statusCode || 500).json({ error: existingResult.error });
       return;
     }
 
-    // Только создатель или менеджер может удалить
-    const canDelete = task.createdById === req.user.id || ['OWNER', 'ADMIN', 'MANAGER'].includes(req.user.role);
+    const existingTask = existingResult.task!;
 
-    if (!canDelete) {
+    // Check delete permission
+    if (!taskService.canDeleteTask(existingTask, req.user.id, req.user.role)) {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
 
-    // Удаляем вложения
-    const attachments = await prisma.taskAttachment.findMany({
+    // Get attachments to delete files
+    const attachments = await dbClient.taskAttachment.findMany({
       where: { taskId: id },
     });
 
@@ -429,20 +240,21 @@ export const deleteTask = async (req: AuthRequest, res: Response, next: NextFunc
       try {
         await fs.unlink(attachment.filePath);
       } catch (error) {
-        console.error('Error deleting file:', error);
+        logger.warn('Error deleting attachment file', { 
+          attachmentId: attachment.id, 
+          error: (error as Error).message 
+        });
       }
     }
 
-    await prisma.task.delete({
-      where: { id },
-    });
+    await taskService.deleteTask(id);
 
     await logAction({
       userId: req.user.id,
       type: 'DELETE',
       entityType: 'Task',
       entityId: id,
-      description: `Deleted task: ${task.title}`,
+      description: `Deleted task: ${existingTask.title}`,
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
     });
@@ -453,7 +265,9 @@ export const deleteTask = async (req: AuthRequest, res: Response, next: NextFunc
   }
 };
 
-// Загрузка файла для задачи
+/**
+ * Upload attachment for a task
+ */
 export const uploadAttachment = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     if (!req.user) {
@@ -468,7 +282,7 @@ export const uploadAttachment = async (req: AuthRequest, res: Response, next: Ne
       return;
     }
 
-    const task = await prisma.task.findUnique({
+    const task = await dbClient.task.findUnique({
       where: { id: taskId },
     });
 
@@ -477,7 +291,7 @@ export const uploadAttachment = async (req: AuthRequest, res: Response, next: Ne
       return;
     }
 
-    const attachment = await prisma.taskAttachment.create({
+    const attachment = await dbClient.taskAttachment.create({
       data: {
         taskId,
         fileName: req.file.originalname,
@@ -503,7 +317,9 @@ export const uploadAttachment = async (req: AuthRequest, res: Response, next: Ne
   }
 };
 
-// Удаление вложения
+/**
+ * Delete an attachment
+ */
 export const deleteAttachment = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     if (!req.user) {
@@ -513,7 +329,7 @@ export const deleteAttachment = async (req: AuthRequest, res: Response, next: Ne
 
     const { attachmentId } = req.params;
 
-    const attachment = await prisma.taskAttachment.findUnique({
+    const attachment = await dbClient.taskAttachment.findUnique({
       where: { id: attachmentId },
       include: {
         task: true,
@@ -525,7 +341,7 @@ export const deleteAttachment = async (req: AuthRequest, res: Response, next: Ne
       return;
     }
 
-    // Проверка прав
+    // Check permissions using task service
     const canDelete =
       attachment.task.createdById === req.user.id ||
       attachment.task.assignedToId === req.user.id ||
@@ -539,10 +355,13 @@ export const deleteAttachment = async (req: AuthRequest, res: Response, next: Ne
     try {
       await fs.unlink(attachment.filePath);
     } catch (error) {
-      console.error('Error deleting file:', error);
+      logger.warn('Error deleting attachment file', { 
+        attachmentId, 
+        error: (error as Error).message 
+      });
     }
 
-    await prisma.taskAttachment.delete({
+    await dbClient.taskAttachment.delete({
       where: { id: attachmentId },
     });
 
@@ -561,6 +380,3 @@ export const deleteAttachment = async (req: AuthRequest, res: Response, next: Ne
     next(error);
   }
 };
-
-// Получение QR-кода задачи
-

@@ -6,7 +6,7 @@ import FloatingActionButton from '../components/FloatingActionButton';
 import HolidayModal from '../components/HolidayModal';
 import { useSwipe } from '../hooks/useSwipe';
 import React from 'react';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, startOfWeek, endOfWeek, addDays } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, startOfWeek, endOfWeek, addDays } from 'date-fns';
 import { Calendar, Copy, X, AlertCircle } from 'lucide-react';
 import { momentLocalizer, View } from 'react-big-calendar';
 import moment from 'moment';
@@ -52,8 +52,19 @@ export default function SchedulePage() {
   
   // Фильтр периода
   const [period, setPeriod] = useState<'week' | 'month' | 'custom'>('month');
-  const [startDate, setStartDate] = useState(startOfMonth(new Date()));
-  const [endDate, setEndDate] = useState(endOfMonth(new Date()));
+
+  // Исправляем проблему с часовыми поясами - создаем даты в локальном времени
+  const getCurrentMonthDates = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const start = new Date(year, month, 1); // 1-е число текущего месяца
+    const end = new Date(year, month + 1, 0, 23, 59, 59, 999); // Последнее число текущего месяца, конец дня
+    return { start, end };
+  };
+
+  const [startDate, setStartDate] = useState(() => getCurrentMonthDates().start);
+  const [endDate, setEndDate] = useState(() => getCurrentMonthDates().end);
   
   // Мультивыбор
   const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
@@ -287,6 +298,8 @@ export default function SchedulePage() {
       const response = await api.get(`/restaurants/${selectedRestaurant}/employees`);
       const allEmployeesData = response.data.allEmployees || [];
       
+      console.log('Loaded employees:', allEmployeesData.length, allEmployeesData);
+      
       // Фильтруем по отделу и должности
       let filteredEmployees = allEmployeesData;
       
@@ -303,8 +316,10 @@ export default function SchedulePage() {
       }
 
       if (showOnlyMyShifts && user?.id) {
-        filteredEmployees = filteredEmployees.filter((emp: any) => emp.userId === user.id || emp.id === user.id);
+        filteredEmployees = filteredEmployees.filter((emp: any) => emp.id === user.id);
       }
+      
+      console.log('Filtered employees:', filteredEmployees.length, filteredEmployees);
       
       // Группируем по positionId (ключ — позиция, внутри — департаменты)
       const grouped: Record<string, Record<string, any[]>> = {};
@@ -318,10 +333,12 @@ export default function SchedulePage() {
         grouped[posKey][deptKey].push(emp);
       });
 
+      console.log('Grouped employees:', Object.keys(grouped).length, grouped);
       setEmployees(grouped);
       // Также сохраняем плоский список для обмена сменами
       setAllEmployeesList(allEmployeesData);
     } catch (error: any) {
+      console.error('Error loading employees:', error);
       toast.error('Ошибка загрузки сотрудников');
     }
   };
@@ -350,15 +367,37 @@ export default function SchedulePage() {
 
   const loadShifts = async () => {
     try {
+      // Формируем даты в формате YYYY-MM-DD (без времени, чтобы избежать проблем с часовыми поясами)
+      const formatDateForAPI = (date: Date) => {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      };
+
+      const startDateStr = formatDateForAPI(startDate);
+      const endDateStr = formatDateForAPI(endDate);
+
+      console.log('Loading shifts with params:', {
+        restaurantId: selectedRestaurant,
+        startDate: startDateStr,
+        endDate: endDateStr,
+        startDateLocal: startDate.toLocaleString(),
+        endDateLocal: endDate.toLocaleString(),
+      });
+
       const response = await api.get('/shifts', {
         params: {
           restaurantId: selectedRestaurant,
-          startDate: startDate.toISOString(),
-          endDate: endDate.toISOString(),
+          startDate: startDateStr,
+          endDate: endDateStr,
         },
       });
-      setShifts(response.data.shifts || []);
+      const loadedShifts = response.data.shifts || [];
+      console.log('Loaded shifts:', loadedShifts.length, loadedShifts);
+      setShifts(loadedShifts);
     } catch (error: any) {
+      console.error('Error loading shifts:', error);
       toast.error('Ошибка загрузки смен');
     }
   };
@@ -516,23 +555,41 @@ export default function SchedulePage() {
     setPeriod(newPeriod);
     const today = new Date();
     if (newPeriod === 'month') {
-      setStartDate(startOfMonth(today));
-      setEndDate(endOfMonth(today));
+      const { start, end } = getCurrentMonthDates();
+      setStartDate(start);
+      setEndDate(end);
     } else if (newPeriod === 'week') {
-      const weekStart = startOfWeek(today, { weekStartsOn: 1 }); // Понедельник
-      const weekEnd = endOfWeek(today, { weekStartsOn: 1 }); // Воскресенье
-      setStartDate(weekStart);
-      setEndDate(weekEnd);
+      // Создаем даты в локальном времени для текущей недели
+      const year = today.getFullYear();
+      const month = today.getMonth();
+      const day = today.getDate();
+      const dayOfWeek = today.getDay(); // 0 = воскресенье, 1 = понедельник
+
+      // Вычисляем понедельник текущей недели
+      const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // Если воскресенье, то -6 дней до понедельника
+      const monday = new Date(year, month, day + mondayOffset);
+
+      // Вычисляем воскресенье текущей недели
+      const sunday = new Date(year, month, day + mondayOffset + 6, 23, 59, 59, 999);
+
+      setStartDate(monday);
+      setEndDate(sunday);
     }
   };
 
   const navigatePeriod = (direction: 'prev' | 'next') => {
     if (period === 'month') {
-      const newDate = direction === 'next' 
-        ? addMonths(startDate, 1)
-        : subMonths(startDate, 1);
-      setStartDate(startOfMonth(newDate));
-      setEndDate(endOfMonth(newDate));
+      const currentYear = startDate.getFullYear();
+      const currentMonth = startDate.getMonth();
+      const newMonth = direction === 'next' ? currentMonth + 1 : currentMonth - 1;
+      const newYear = newMonth < 0 ? currentYear - 1 : newMonth > 11 ? currentYear + 1 : currentYear;
+      const normalizedMonth = newMonth < 0 ? 11 : newMonth > 11 ? 0 : newMonth;
+
+      const newStart = new Date(newYear, normalizedMonth, 1);
+      const newEnd = new Date(newYear, normalizedMonth + 1, 0, 23, 59, 59, 999);
+
+      setStartDate(newStart);
+      setEndDate(newEnd);
     } else if (period === 'week') {
       const days = direction === 'next' ? 7 : -7;
       const newStart = addDays(startDate, days);

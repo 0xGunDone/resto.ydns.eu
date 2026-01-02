@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
 
@@ -29,7 +29,7 @@ export const getScheduleTemplates = async (req: AuthRequest, res: Response, next
       return;
     }
 
-    const templates = await prisma.scheduleTemplate.findMany({
+    const templates = await dbClient.scheduleTemplate.findMany({
       where: {
         restaurantId: restaurantId as string,
         isActive: true,
@@ -68,6 +68,13 @@ export const createScheduleTemplate = async (req: AuthRequest, res: Response, ne
       return;
     }
 
+    const { restaurantId, name, description, periodType, startDate, endDate } = req.body;
+
+    if (!restaurantId) {
+      res.status(400).json({ error: 'restaurantId is required' });
+      return;
+    }
+
     // Проверяем права через permissions
     const { checkPermission } = await import('../utils/checkPermissions');
     const { PERMISSIONS } = await import('../utils/permissions');
@@ -81,10 +88,8 @@ export const createScheduleTemplate = async (req: AuthRequest, res: Response, ne
       return;
     }
 
-    const { restaurantId, name, description, periodType, startDate, endDate } = req.body;
-
     // Получаем смены за указанный период
-    const shifts = await prisma.shift.findMany({
+    const shifts = await dbClient.shift.findMany({
       where: {
         restaurantId,
         startTime: {
@@ -139,7 +144,7 @@ export const createScheduleTemplate = async (req: AuthRequest, res: Response, ne
       shiftsData.push(shiftData);
     }
 
-    const template = await prisma.scheduleTemplate.create({
+    const template = await dbClient.scheduleTemplate.create({
       data: {
         restaurantId,
         createdById: req.user.id,
@@ -191,7 +196,7 @@ export const applyScheduleTemplate = async (req: AuthRequest, res: Response, nex
 
     const { templateId, startDate, replaceExisting } = req.body;
 
-    const template = await prisma.scheduleTemplate.findUnique({
+    const template = await dbClient.scheduleTemplate.findUnique({
       where: { id: templateId },
     });
 
@@ -216,7 +221,7 @@ export const applyScheduleTemplate = async (req: AuthRequest, res: Response, nex
         periodEnd.setMonth(periodEnd.getMonth() + 1);
       }
 
-      await prisma.shift.deleteMany({
+      await dbClient.shift.deleteMany({
         where: {
           restaurantId: template.restaurantId,
           startTime: {
@@ -263,7 +268,7 @@ export const applyScheduleTemplate = async (req: AuthRequest, res: Response, nex
       const dayEnd = new Date(shiftDate);
       dayEnd.setHours(23, 59, 59, 999);
 
-      const existingShift = await prisma.shift.findFirst({
+      const existingShift = await dbClient.shift.findFirst({
         where: {
           restaurantId: template.restaurantId,
           userId: shiftData.userId,
@@ -283,7 +288,7 @@ export const applyScheduleTemplate = async (req: AuthRequest, res: Response, nex
       const hours = (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
 
       try {
-        const shift = await prisma.shift.create({
+        const shift = await dbClient.shift.create({
           data: {
             restaurantId: template.restaurantId,
             userId: shiftData.userId,
@@ -344,7 +349,7 @@ export const deleteScheduleTemplate = async (req: AuthRequest, res: Response, ne
 
     const { id } = req.params;
 
-    const template = await prisma.scheduleTemplate.findUnique({
+    const template = await dbClient.scheduleTemplate.findUnique({
       where: { id },
     });
 
@@ -369,7 +374,7 @@ export const deleteScheduleTemplate = async (req: AuthRequest, res: Response, ne
     // Проверяем, что шаблон принадлежит ресторану, к которому у пользователя есть доступ
     // (можно добавить дополнительную проверку прав)
 
-    await prisma.scheduleTemplate.update({
+    await dbClient.scheduleTemplate.update({
       where: { id },
       data: { isActive: false },
     });

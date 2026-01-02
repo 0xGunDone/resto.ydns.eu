@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { AuthRequest } from '../middleware/auth';
 
 // Получение журнала действий
@@ -31,7 +31,7 @@ export const getActionLogs = async (req: AuthRequest, res: Response, next: NextF
       if (endDate) where.createdAt.lte = new Date(endDate as string);
     }
 
-    const logs = await prisma.actionLog.findMany({
+    const logs = await dbClient.actionLog.findMany({
       where,
       include: {
         user: {

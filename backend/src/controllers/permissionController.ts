@@ -1,13 +1,13 @@
 import { Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
 
 // Получение всех прав
 export const getPermissions = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const permissions = await prisma.permission.findMany({
+    const permissions = await dbClient.permission.findMany({
       orderBy: [
         { category: 'asc' },
         { name: 'asc' },
@@ -34,7 +34,7 @@ export const getPositionPermissions = async (req: AuthRequest, res: Response, ne
   try {
     const { positionId } = req.params;
 
-    const position = await prisma.position.findUnique({
+    const position = await dbClient.position.findUnique({
       where: { id: positionId },
       include: {
         permissions: {
@@ -58,7 +58,7 @@ export const getPositionPermissions = async (req: AuthRequest, res: Response, ne
 
     // Проверка доступа - только владелец ресторана или админ
     if (req.user?.role !== 'OWNER' && req.user?.role !== 'ADMIN') {
-      const restaurantUser = await prisma.restaurantUser.findFirst({
+      const restaurantUser = await dbClient.restaurantUser.findFirst({
         where: {
           userId: req.user?.id,
           restaurantId: position.restaurantId,
@@ -73,7 +73,7 @@ export const getPositionPermissions = async (req: AuthRequest, res: Response, ne
 
       // Проверяем, есть ли право редактировать должности
       // Для упрощения - проверяем, является ли пользователь менеджером ресторана
-      const restaurant = await prisma.restaurant.findUnique({
+      const restaurant = await dbClient.restaurant.findUnique({
         where: { id: position.restaurantId },
         select: { managerId: true },
       });
@@ -121,7 +121,7 @@ export const updatePositionPermissions = async (req: AuthRequest, res: Response,
       return;
     }
 
-    const position = await prisma.position.findUnique({
+    const position = await dbClient.position.findUnique({
       where: { id: positionId },
       include: {
         restaurant: {
@@ -140,7 +140,7 @@ export const updatePositionPermissions = async (req: AuthRequest, res: Response,
 
     // Проверка доступа
     if (req.user?.role !== 'OWNER' && req.user?.role !== 'ADMIN') {
-      const restaurant = await prisma.restaurant.findUnique({
+      const restaurant = await dbClient.restaurant.findUnique({
         where: { id: position.restaurantId },
         select: { managerId: true },
       });
@@ -152,7 +152,7 @@ export const updatePositionPermissions = async (req: AuthRequest, res: Response,
     }
 
     // Проверяем, что все права существуют
-    const permissions = await prisma.permission.findMany({
+    const permissions = await dbClient.permission.findMany({
       where: {
         id: { in: permissionIds },
       },
@@ -164,7 +164,7 @@ export const updatePositionPermissions = async (req: AuthRequest, res: Response,
     }
 
     // Удаляем старые права
-    await prisma.positionPermission.deleteMany({
+    await dbClient.positionPermission.deleteMany({
       where: {
         positionId,
       },
@@ -172,7 +172,7 @@ export const updatePositionPermissions = async (req: AuthRequest, res: Response,
 
     // Создаем новые права
     if (permissionIds.length > 0) {
-      await prisma.positionPermission.createMany({
+      await dbClient.positionPermission.createMany({
         data: permissionIds.map((permissionId: string) => ({
           positionId,
           permissionId,

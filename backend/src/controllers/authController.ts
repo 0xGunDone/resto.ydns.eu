@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { hashPassword, comparePassword } from '../utils/bcrypt';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { generateTwoFactorSecret, verifyTwoFactorToken } from '../utils/twoFactor';
@@ -36,7 +36,7 @@ export const register = async (req: Request, res: Response, next: NextFunction):
     const { email, password, firstName, lastName, phone, role } = req.body;
 
     // Проверяем, что email не занят
-    const existingUser = await prisma.user.findUnique({
+    const existingUser = await dbClient.user.findUnique({
       where: { email },
     });
 
@@ -52,7 +52,7 @@ export const register = async (req: Request, res: Response, next: NextFunction):
     const passwordHash = await hashPassword(password);
 
     // Создаем пользователя
-    const user = await prisma.user.create({
+    const user = await dbClient.user.create({
       data: {
         email,
         passwordHash,
@@ -102,7 +102,7 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
     const { email, password } = req.body;
 
     // Находим пользователя
-    const user = await prisma.user.findUnique({
+    const user = await dbClient.user.findUnique({
       where: { email },
     });
 
@@ -180,7 +180,7 @@ export const verify2FA = async (req: Request, res: Response, next: NextFunction)
 
     const { email, token } = req.body;
 
-    const user = await prisma.user.findUnique({
+    const user = await dbClient.user.findUnique({
       where: { email },
     });
 
@@ -245,7 +245,7 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
     const payload = verifyRefreshToken(token);
 
     // Проверяем, что пользователь существует и активен
-    const user = await prisma.user.findUnique({
+    const user = await dbClient.user.findUnique({
       where: { id: payload.userId },
       select: { id: true, email: true, role: true, isActive: true },
     });
@@ -313,7 +313,7 @@ export const generate2FA = async (req: AuthRequest, res: Response, next: NextFun
       return;
     }
 
-    const user = await prisma.user.findUnique({
+    const user = await dbClient.user.findUnique({
       where: { id: req.user.id },
     });
 
@@ -356,7 +356,7 @@ export const enable2FA = async (req: AuthRequest, res: Response, next: NextFunct
     }
 
     // Сохраняем секрет и включаем 2FA
-    await prisma.user.update({
+    await dbClient.user.update({
       where: { id: req.user.id },
       data: {
         twoFactorSecret: secret,
@@ -387,7 +387,7 @@ export const disable2FA = async (req: AuthRequest, res: Response, next: NextFunc
       return;
     }
 
-    await prisma.user.update({
+    await dbClient.user.update({
       where: { id: req.user.id },
       data: {
         twoFactorEnabled: false,
@@ -418,7 +418,7 @@ export const getMe = async (req: AuthRequest, res: Response, next: NextFunction)
       return;
     }
 
-    const user = await prisma.user.findUnique({
+    const user = await dbClient.user.findUnique({
       where: { id: req.user.id },
       select: {
         id: true,
@@ -477,7 +477,7 @@ export const updateProfile = async (req: AuthRequest, res: Response, next: NextF
 
     // Обновление email (проверяем уникальность)
     if (email && email !== req.user.email) {
-      const existingUser = await prisma.user.findUnique({
+      const existingUser = await dbClient.user.findUnique({
         where: { email },
       });
 
@@ -500,7 +500,7 @@ export const updateProfile = async (req: AuthRequest, res: Response, next: NextF
     if (phone !== undefined) updateData.phone = phone || null;
 
     // Обновляем пользователя
-    const updatedUser = await prisma.user.update({
+    const updatedUser = await dbClient.user.update({
       where: { id: req.user.id },
       data: updateData,
       select: {

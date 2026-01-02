@@ -133,16 +133,8 @@ router.post(
 // Получение одной смены
 router.get('/:id', shiftController.getShift);
 
-// Обновление смены
-router.put(
-  '/:id',
-  [
-    body('type').optional().isIn(['FULL', 'MORNING', 'EVENING', 'PARTIAL']),
-    body('startTime').optional().isISO8601(),
-    body('endTime').optional().isISO8601(),
-  ],
-  shiftController.updateShift
-);
+// Обновление смены (валидация внутри контроллера)
+router.put('/:id', shiftController.updateShift);
 
 // Удаление смены
 router.delete('/:id', shiftController.deleteShift);

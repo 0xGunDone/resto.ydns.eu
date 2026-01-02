@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { AuthRequest } from '../middleware/auth';
 
 // Получение всех уведомлений пользователя
@@ -20,21 +20,39 @@ export const getNotifications = async (req: AuthRequest, res: Response, next: Ne
       where.isRead = false;
     }
 
-    const notifications = await prisma.notification.findMany({
-      where,
-      orderBy: {
-        createdAt: 'desc',
-      },
-      take: parseInt(limit as string),
-    });
+    let notifications;
+    try {
+      notifications = await dbClient.notification.findMany({
+        where,
+        orderBy: {
+          createdAt: 'desc',
+        },
+        take: parseInt(limit as string),
+      });
+    } catch (error: any) {
+      console.error('Error in notification.findMany:', error);
+      console.error('Where clause:', JSON.stringify(where, null, 2));
+      console.error('Error details:', {
+        message: error?.message,
+        code: error?.code,
+        stack: error?.stack,
+      });
+      throw error;
+    }
 
     // Подсчитываем непрочитанные
-    const unreadCount = await prisma.notification.count({
-      where: {
-        userId: req.user.id,
-        isRead: false,
-      },
-    });
+    let unreadCount = 0;
+    try {
+      unreadCount = await dbClient.notification.count({
+        where: {
+          userId: req.user.id,
+          isRead: false,
+        },
+      });
+    } catch (error: any) {
+      console.error('Error in notification.count:', error);
+      // Не прерываем выполнение, просто используем 0
+    }
 
     res.json({
       notifications: notifications || [],
@@ -65,7 +83,7 @@ export const markAsRead = async (req: AuthRequest, res: Response, next: NextFunc
 
     const { id } = req.params;
 
-    const notification = await prisma.notification.findUnique({
+    const notification = await dbClient.notification.findUnique({
       where: { id },
     });
 
@@ -79,7 +97,7 @@ export const markAsRead = async (req: AuthRequest, res: Response, next: NextFunc
       return;
     }
 
-    await prisma.notification.update({
+    await dbClient.notification.update({
       where: { id },
       data: {
         isRead: true,
@@ -101,16 +119,23 @@ export const markAllAsRead = async (req: AuthRequest, res: Response, next: NextF
       return;
     }
 
-    await prisma.notification.updateMany({
+    // updateMany не реализован, используем цикл
+    const notifications = await dbClient.notification.findMany({
       where: {
         userId: req.user.id,
         isRead: false,
       },
-      data: {
-        isRead: true,
-        readAt: new Date(),
-      },
     });
+    
+    for (const notification of notifications) {
+      await dbClient.notification.update({
+        where: { id: notification.id },
+        data: {
+          isRead: true,
+          readAt: new Date(),
+        },
+      });
+    }
 
     res.json({ message: 'All notifications marked as read' });
   } catch (error) {
@@ -128,7 +153,7 @@ export const deleteNotification = async (req: AuthRequest, res: Response, next: 
 
     const { id } = req.params;
 
-    const notification = await prisma.notification.findUnique({
+    const notification = await dbClient.notification.findUnique({
       where: { id },
     });
 
@@ -142,7 +167,7 @@ export const deleteNotification = async (req: AuthRequest, res: Response, next: 
       return;
     }
 
-    await prisma.notification.delete({
+    await dbClient.notification.delete({
       where: { id },
     });
 
@@ -160,7 +185,7 @@ export const getUnreadCount = async (req: AuthRequest, res: Response, next: Next
       return;
     }
 
-    const count = await prisma.notification.count({
+    const count = await dbClient.notification.count({
       where: {
         userId: req.user.id,
         isRead: false,

@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
 import { checkPermission } from '../utils/checkPermissions';
@@ -69,7 +69,7 @@ export const getBonuses = async (req: AuthRequest, res: Response, next: NextFunc
       }
     }
 
-    const bonuses = await prisma.bonus.findMany({
+    const bonuses = await dbClient.bonus.findMany({
       where,
       include: {
         user: {
@@ -134,7 +134,7 @@ export const createBonus = async (req: AuthRequest, res: Response, next: NextFun
       return;
     }
 
-    const bonus = await prisma.bonus.create({
+    const bonus = await dbClient.bonus.create({
       data: {
         restaurantId,
         userId,
@@ -168,7 +168,7 @@ export const createBonus = async (req: AuthRequest, res: Response, next: NextFun
       type: 'CREATE',
       entityType: 'Bonus',
       entityId: bonus.id,
-      description: `Начислена премия ${amount} руб. сотруднику ${bonus.user.firstName} ${bonus.user.lastName}`,
+      description: `Начислена премия ${amount} руб. сотруднику ${bonus.user ? `${bonus.user.firstName} ${bonus.user.lastName}` : 'неизвестному сотруднику'}`,
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
     });
@@ -197,7 +197,7 @@ export const updateBonus = async (req: AuthRequest, res: Response, next: NextFun
     const { amount, comment } = req.body;
 
     // Получаем премию
-    const bonus = await prisma.bonus.findUnique({
+    const bonus = await dbClient.bonus.findUnique({
       where: { id },
       include: {
         restaurant: {
@@ -230,7 +230,7 @@ export const updateBonus = async (req: AuthRequest, res: Response, next: NextFun
     if (amount !== undefined) updateData.amount = parseFloat(amount);
     if (comment !== undefined) updateData.comment = comment;
 
-    const updatedBonus = await prisma.bonus.update({
+    const updatedBonus = await dbClient.bonus.update({
       where: { id },
       data: updateData,
       include: {
@@ -278,7 +278,7 @@ export const deleteBonus = async (req: AuthRequest, res: Response, next: NextFun
     const { id } = req.params;
 
     // Получаем премию
-    const bonus = await prisma.bonus.findUnique({
+    const bonus = await dbClient.bonus.findUnique({
       where: { id },
       include: {
         restaurant: {
@@ -313,7 +313,7 @@ export const deleteBonus = async (req: AuthRequest, res: Response, next: NextFun
       return;
     }
 
-    await prisma.bonus.delete({
+    await dbClient.bonus.delete({
       where: { id },
     });
 
@@ -322,7 +322,7 @@ export const deleteBonus = async (req: AuthRequest, res: Response, next: NextFun
       type: 'DELETE',
       entityType: 'Bonus',
       entityId: id,
-      description: `Удалена премия ${bonus.amount} руб. сотруднику ${bonus.user.firstName} ${bonus.user.lastName}`,
+      description: `Удалена премия ${bonus.amount} руб. сотруднику ${bonus.user ? `${bonus.user.firstName} ${bonus.user.lastName}` : 'неизвестному сотруднику'}`,
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
     });
@@ -396,7 +396,7 @@ export const getPenalties = async (req: AuthRequest, res: Response, next: NextFu
       }
     }
 
-    const penalties = await prisma.penalty.findMany({
+    const penalties = await dbClient.penalty.findMany({
       where,
       include: {
         user: {
@@ -460,7 +460,7 @@ export const createPenalty = async (req: AuthRequest, res: Response, next: NextF
       return;
     }
 
-    const penalty = await prisma.penalty.create({
+    const penalty = await dbClient.penalty.create({
       data: {
         restaurantId,
         userId,
@@ -494,7 +494,7 @@ export const createPenalty = async (req: AuthRequest, res: Response, next: NextF
       type: 'CREATE',
       entityType: 'Penalty',
       entityId: penalty.id,
-      description: `Назначен штраф ${amount} руб. сотруднику ${penalty.user.firstName} ${penalty.user.lastName}`,
+      description: `Назначен штраф ${amount} руб. сотруднику ${penalty.user ? `${penalty.user.firstName} ${penalty.user.lastName}` : 'неизвестному сотруднику'}`,
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
     });
@@ -523,7 +523,7 @@ export const updatePenalty = async (req: AuthRequest, res: Response, next: NextF
     const { amount, comment } = req.body;
 
     // Получаем штраф
-    const penalty = await prisma.penalty.findUnique({
+    const penalty = await dbClient.penalty.findUnique({
       where: { id },
       include: {
         restaurant: {
@@ -556,7 +556,7 @@ export const updatePenalty = async (req: AuthRequest, res: Response, next: NextF
     if (amount !== undefined) updateData.amount = parseFloat(amount);
     if (comment !== undefined) updateData.comment = comment;
 
-    const updatedPenalty = await prisma.penalty.update({
+    const updatedPenalty = await dbClient.penalty.update({
       where: { id },
       data: updateData,
       include: {
@@ -604,7 +604,7 @@ export const deletePenalty = async (req: AuthRequest, res: Response, next: NextF
     const { id } = req.params;
 
     // Получаем штраф
-    const penalty = await prisma.penalty.findUnique({
+    const penalty = await dbClient.penalty.findUnique({
       where: { id },
       include: {
         restaurant: {
@@ -639,7 +639,7 @@ export const deletePenalty = async (req: AuthRequest, res: Response, next: NextF
       return;
     }
 
-    await prisma.penalty.delete({
+    await dbClient.penalty.delete({
       where: { id },
     });
 
@@ -648,7 +648,7 @@ export const deletePenalty = async (req: AuthRequest, res: Response, next: NextF
       type: 'DELETE',
       entityType: 'Penalty',
       entityId: id,
-      description: `Удален штраф ${penalty.amount} руб. сотруднику ${penalty.user.firstName} ${penalty.user.lastName}`,
+      description: `Удален штраф ${penalty.amount} руб. сотруднику ${penalty.user ? `${penalty.user.firstName} ${penalty.user.lastName}` : 'неизвестному сотруднику'}`,
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
     });

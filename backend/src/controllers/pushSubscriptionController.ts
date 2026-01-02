@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { AuthRequest } from '../middleware/auth';
 
 // Регистрация push-подписки
@@ -18,13 +18,13 @@ export const subscribe = async (req: AuthRequest, res: Response, next: NextFunct
     }
 
     // Проверяем, существует ли уже такая подписка
-    const existing = await prisma.pushSubscription.findUnique({
+    const existing = await dbClient.pushSubscription.findUnique({
       where: { endpoint },
     });
 
     if (existing) {
       // Обновляем существующую подписку
-      await prisma.pushSubscription.update({
+      await dbClient.pushSubscription.update({
         where: { endpoint },
         data: {
           userId: req.user.id,
@@ -36,7 +36,7 @@ export const subscribe = async (req: AuthRequest, res: Response, next: NextFunct
       });
     } else {
       // Создаем новую подписку
-      await prisma.pushSubscription.create({
+      await dbClient.pushSubscription.create({
         data: {
           userId: req.user.id,
           endpoint,
@@ -70,7 +70,7 @@ export const unsubscribe = async (req: AuthRequest, res: Response, next: NextFun
     }
 
     // Проверяем, что подписка принадлежит текущему пользователю
-    const subscription = await prisma.pushSubscription.findUnique({
+    const subscription = await dbClient.pushSubscription.findUnique({
       where: { endpoint },
     });
 
@@ -85,7 +85,7 @@ export const unsubscribe = async (req: AuthRequest, res: Response, next: NextFun
     }
 
     // Деактивируем подписку
-    await prisma.pushSubscription.update({
+    await dbClient.pushSubscription.update({
       where: { endpoint },
       data: { isActive: false },
     });
@@ -104,7 +104,7 @@ export const getSubscriptions = async (req: AuthRequest, res: Response, next: Ne
       return;
     }
 
-    const subscriptions = await prisma.pushSubscription.findMany({
+    const subscriptions = await dbClient.pushSubscription.findMany({
       where: {
         userId: req.user.id,
         isActive: true,

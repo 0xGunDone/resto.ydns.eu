@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
 
@@ -16,7 +16,7 @@ export const createFeedback = async (req: AuthRequest, res: Response, next: Next
     const { restaurantId, type, message, isAnonymous, email, phone } = req.body;
     const userId = !isAnonymous && req.user ? req.user.id : null;
 
-    const feedback = await prisma.feedback.create({
+    const feedback = await dbClient.feedback.create({
       data: {
         restaurantId,
         userId,
@@ -28,21 +28,8 @@ export const createFeedback = async (req: AuthRequest, res: Response, next: Next
         status: 'PENDING',
       },
       include: {
-        user: userId
-          ? {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-              },
-            }
-          : false,
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        user: userId ? true : false,
+        restaurant: true,
       },
     });
 
@@ -85,22 +72,11 @@ export const getFeedback = async (req: AuthRequest, res: Response, next: NextFun
       where.userId = req.user.id;
     }
 
-    const feedback = await prisma.feedback.findMany({
+    const feedback = await dbClient.feedback.findMany({
       where,
       include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        user: true,
+        restaurant: true,
         attachments: true,
       },
       orderBy: {
@@ -130,20 +106,14 @@ export const updateFeedbackStatus = async (req: AuthRequest, res: Response, next
     const { id } = req.params;
     const { status, response } = req.body;
 
-    const feedback = await prisma.feedback.update({
+    const feedback = await dbClient.feedback.update({
       where: { id },
       data: {
         status,
         response: response || null,
       },
       include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
+        user: true,
       },
     });
 
@@ -173,7 +143,7 @@ export const uploadAttachment = async (req: AuthRequest, res: Response, next: Ne
 
     const { feedbackId } = req.params;
 
-    const attachment = await prisma.feedbackAttachment.create({
+    const attachment = await dbClient.feedbackAttachment.create({
       data: {
         feedbackId,
         fileName: req.file.originalname,

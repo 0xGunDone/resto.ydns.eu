@@ -1,4 +1,4 @@
-import prisma from './prisma';
+import dbClient from './db';
 
 // Типы действий (SQLite не поддерживает enum)
 export type ActionLogType = 'CREATE' | 'UPDATE' | 'DELETE' | 'LOGIN' | 'LOGOUT' | 'APPROVE' | 'REJECT' | 'COMPLETE';
@@ -16,7 +16,7 @@ interface LogActionParams {
 
 export const logAction = async (params: LogActionParams): Promise<void> => {
   try {
-    await prisma.actionLog.create({
+    await dbClient.actionLog.create({
       data: {
         userId: params.userId,
         type: params.type,

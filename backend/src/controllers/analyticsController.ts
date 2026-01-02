@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { AuthRequest } from '../middleware/auth';
 
 // Получение KPI и статистики
@@ -22,25 +22,25 @@ export const getKPIs = async (req: AuthRequest, res: Response, next: NextFunctio
     if (endDate) where.endTime = { lte: new Date(endDate as string) };
 
     // Статистика по сменам
-    const totalShifts = await prisma.shift.count({ where });
-    const completedShifts = await prisma.shift.count({ where: { ...where, isCompleted: true } });
-    const confirmedShifts = await prisma.shift.count({ where: { ...where, isConfirmed: true } });
+    const totalShifts = await dbClient.shift.count({ where });
+    const completedShifts = await dbClient.shift.count({ where: { ...where, isCompleted: true } });
+    const confirmedShifts = await dbClient.shift.count({ where: { ...where, isConfirmed: true } });
 
     // Статистика по задачам
     const taskWhere: any = { restaurantId: restaurantId as string };
-    const totalTasks = await prisma.task.count({ where: taskWhere });
-    const doneTasks = await prisma.task.count({ where: { ...taskWhere, status: 'DONE' } });
-    const inProgressTasks = await prisma.task.count({ where: { ...taskWhere, status: 'IN_PROGRESS' } });
+    const totalTasks = await dbClient.task.count({ where: taskWhere });
+    const doneTasks = await dbClient.task.count({ where: { ...taskWhere, status: 'DONE' } });
+    const inProgressTasks = await dbClient.task.count({ where: { ...taskWhere, status: 'IN_PROGRESS' } });
 
     // Статистика по сотрудникам
-    const totalEmployees = await prisma.restaurantUser.count({
+    const totalEmployees = await dbClient.restaurantUser.count({
       where: { restaurantId: restaurantId as string, isActive: true },
     });
 
     // Статистика по обратной связи
     const feedbackWhere: any = { restaurantId: restaurantId as string };
-    const totalFeedback = await prisma.feedback.count({ where: feedbackWhere });
-    const pendingFeedback = await prisma.feedback.count({ where: { ...feedbackWhere, status: 'PENDING' } });
+    const totalFeedback = await dbClient.feedback.count({ where: feedbackWhere });
+    const pendingFeedback = await dbClient.feedback.count({ where: { ...feedbackWhere, status: 'PENDING' } });
 
     res.json({
       shifts: {
@@ -78,31 +78,34 @@ export const getEmployeeStats = async (req: AuthRequest, res: Response, next: Ne
 
     const { restaurantId, userId, month, year } = req.query;
 
-    const employeeStats = await prisma.shift.groupBy({
-      by: ['userId'],
-      where: {
-        restaurantId: restaurantId as string,
-        userId: userId ? (userId as string) : undefined,
-        startTime: month && year
+    const where: any = {
+      restaurantId: restaurantId as string,
+      userId: userId ? (userId as string) : undefined,
+      startTime:
+        month && year
           ? {
               gte: new Date(parseInt(year as string), parseInt(month as string) - 1, 1),
               lt: new Date(parseInt(year as string), parseInt(month as string), 1),
             }
           : undefined,
-        isConfirmed: true,
-      },
-      _sum: {
-        hours: true,
-      },
-      _count: {
-        id: true,
-      },
-    });
+      isConfirmed: true,
+    };
+
+    const shifts = await dbClient.shift.findMany({ where });
+
+    const statsByUserId = new Map<string, { totalHours: number; shiftCount: number }>();
+    for (const shift of shifts) {
+      if (!shift.userId) continue;
+      const current = statsByUserId.get(shift.userId) || { totalHours: 0, shiftCount: 0 };
+      current.totalHours += Number(shift.hours) || 0;
+      current.shiftCount += 1;
+      statsByUserId.set(shift.userId, current);
+    }
 
     const statsWithUsers = await Promise.all(
-      employeeStats.map(async (stat) => {
-        const user = await prisma.user.findUnique({
-          where: { id: stat.userId },
+      Array.from(statsByUserId.entries()).map(async ([uid, stat]) => {
+        const user = await dbClient.user.findUnique({
+          where: { id: uid },
           select: {
             id: true,
             firstName: true,
@@ -110,10 +113,11 @@ export const getEmployeeStats = async (req: AuthRequest, res: Response, next: Ne
             email: true,
           },
         });
+
         return {
           user,
-          totalHours: stat._sum.hours || 0,
-          shiftCount: stat._count.id,
+          totalHours: stat.totalHours,
+          shiftCount: stat.shiftCount,
         };
       })
     );

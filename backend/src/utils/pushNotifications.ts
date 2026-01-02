@@ -1,15 +1,22 @@
 import webpush from 'web-push';
-import prisma from './prisma';
+import dbClient from './db';
 
-// Инициализация VAPID ключей (должны быть в .env)
-const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
-const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
-const vapidSubject = process.env.VAPID_SUBJECT || 'mailto:admin@resto.local';
+// Ленивая инициализация VAPID ключей
+let vapidInitialized = false;
 
-if (vapidPublicKey && vapidPrivateKey) {
-  webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
-} else {
-  console.warn('⚠️  VAPID keys not configured. Push notifications will not work.');
+export function initializeVapid() {
+  if (vapidInitialized) return;
+  
+  const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
+  const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
+  const vapidSubject = process.env.VAPID_SUBJECT || 'mailto:admin@resto.local';
+
+  if (vapidPublicKey && vapidPrivateKey) {
+    webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+    vapidInitialized = true;
+  } else {
+    console.warn('⚠️  VAPID keys not configured. Push notifications will not work.');
+  }
 }
 
 export interface PushNotificationPayload {
@@ -35,9 +42,11 @@ export async function sendPushNotification(
   userId: string,
   payload: PushNotificationPayload
 ): Promise<void> {
+  initializeVapid(); // Убеждаемся, что VAPID инициализирован
+  
   try {
     // Проверяем настройки уведомлений пользователя
-    const settings = await prisma.notificationSettings.findUnique({
+    const settings = await dbClient.notificationSettings.findUnique({
       where: { userId },
     });
 
@@ -47,7 +56,7 @@ export async function sendPushNotification(
     }
 
     // Получаем все активные подписки пользователя
-    const subscriptions = await prisma.pushSubscription.findMany({
+    const subscriptions = await dbClient.pushSubscription.findMany({
       where: {
         userId,
         isActive: true,
@@ -79,7 +88,7 @@ export async function sendPushNotification(
       } catch (error: any) {
         // Если подписка недействительна, деактивируем её
         if (error.statusCode === 410 || error.statusCode === 404) {
-          await prisma.pushSubscription.update({
+          await dbClient.pushSubscription.update({
             where: { endpoint: subscription.endpoint },
             data: { isActive: false },
           });
@@ -104,7 +113,7 @@ export async function sendPushNotificationByType(
 ): Promise<void> {
   try {
     // Проверяем настройки уведомлений пользователя
-    const settings = await prisma.notificationSettings.findUnique({
+    const settings = await dbClient.notificationSettings.findUnique({
       where: { userId },
     });
 
@@ -145,6 +154,6 @@ export async function sendPushNotificationByType(
  * Получить публичный VAPID ключ для клиента
  */
 export function getVapidPublicKey(): string | null {
-  return vapidPublicKey || null;
+  return process.env.VAPID_PUBLIC_KEY || null;
 }
 

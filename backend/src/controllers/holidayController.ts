@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
 import { checkPermission } from '../utils/checkPermissions';
@@ -38,7 +38,7 @@ export const getHolidays = async (req: AuthRequest, res: Response, next: NextFun
       }
     }
 
-    const holidays = await prisma.holiday.findMany({
+    const holidays = await dbClient.holiday.findMany({
       where,
       orderBy: {
         date: 'asc',
@@ -71,7 +71,7 @@ export const createHoliday = async (req: AuthRequest, res: Response, next: NextF
     const isOwnerOrAdmin = ['OWNER', 'ADMIN'].includes(req.user.role);
     
     // Проверяем, является ли пользователь менеджером ресторана
-    const restaurant = await prisma.restaurant.findUnique({
+    const restaurant = await dbClient.restaurant.findUnique({
       where: { id: restaurantId },
       select: { managerId: true },
     });
@@ -87,7 +87,7 @@ export const createHoliday = async (req: AuthRequest, res: Response, next: NextF
     holidayDate.setHours(0, 0, 0, 0);
 
     // Проверяем, не существует ли уже праздник на эту дату
-    const existing = await prisma.holiday.findUnique({
+    const existing = await dbClient.holiday.findUnique({
       where: {
         restaurantId_date: {
           restaurantId,
@@ -101,7 +101,7 @@ export const createHoliday = async (req: AuthRequest, res: Response, next: NextF
       return;
     }
 
-    const holiday = await prisma.holiday.create({
+    const holiday = await dbClient.holiday.create({
       data: {
         restaurantId,
         name,
@@ -149,7 +149,7 @@ export const updateHoliday = async (req: AuthRequest, res: Response, next: NextF
     const { name, date, type, isRecurring } = req.body;
 
     // Получаем праздник
-    const holiday = await prisma.holiday.findUnique({
+    const holiday = await dbClient.holiday.findUnique({
       where: { id },
       include: {
         restaurant: {
@@ -186,7 +186,7 @@ export const updateHoliday = async (req: AuthRequest, res: Response, next: NextF
 
       // Проверяем, не существует ли уже праздник на новую дату
       if (holidayDate.getTime() !== holiday.date.getTime()) {
-        const existing = await prisma.holiday.findUnique({
+        const existing = await dbClient.holiday.findUnique({
           where: {
             restaurantId_date: {
               restaurantId: holiday.restaurantId,
@@ -202,7 +202,7 @@ export const updateHoliday = async (req: AuthRequest, res: Response, next: NextF
       }
     }
 
-    const updatedHoliday = await prisma.holiday.update({
+    const updatedHoliday = await dbClient.holiday.update({
       where: { id },
       data: updateData,
     });
@@ -238,7 +238,7 @@ export const deleteHoliday = async (req: AuthRequest, res: Response, next: NextF
     const { id } = req.params;
 
     // Получаем праздник
-    const holiday = await prisma.holiday.findUnique({
+    const holiday = await dbClient.holiday.findUnique({
       where: { id },
       include: {
         restaurant: {
@@ -263,7 +263,7 @@ export const deleteHoliday = async (req: AuthRequest, res: Response, next: NextF
       return;
     }
 
-    await prisma.holiday.delete({
+    await dbClient.holiday.delete({
       where: { id },
     });
 

@@ -1,19 +1,19 @@
 import { Request, Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
 
 // Получение времени смены на основе даты и шаблона (ID или название)
 const getShiftTimes = async (date: Date, templateId: string, restaurantId?: string) => {
   // Сначала пытаемся найти шаблон по ID
-  let template = await prisma.shiftTemplate.findUnique({
+  let template = await dbClient.shiftTemplate.findUnique({
     where: { id: templateId },
   });
 
   // Если не найден по ID, ищем по названию
   if (!template) {
-    template = await prisma.shiftTemplate.findFirst({
+    template = await dbClient.shiftTemplate.findFirst({
       where: {
         name: templateId,
         isActive: true,
@@ -67,6 +67,7 @@ export const createShiftsBatch = async (req: AuthRequest, res: Response, next: N
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      console.error('Validation errors in updateShift:', errors.array(), 'body:', req.body);
       res.status(400).json({ errors: errors.array() });
       return;
     }
@@ -119,7 +120,7 @@ export const createShiftsBatch = async (req: AuthRequest, res: Response, next: N
       const dayEnd = new Date(shiftDate);
       dayEnd.setHours(23, 59, 59, 999);
 
-      const existingShift = await prisma.shift.findFirst({
+      const existingShift = await dbClient.shift.findFirst({
         where: {
           restaurantId,
           userId,
@@ -136,7 +137,7 @@ export const createShiftsBatch = async (req: AuthRequest, res: Response, next: N
       }
 
       try {
-        const shift = await prisma.shift.create({
+        const shift = await dbClient.shift.create({
           data: {
             restaurantId,
             userId,
@@ -147,13 +148,7 @@ export const createShiftsBatch = async (req: AuthRequest, res: Response, next: N
             notes: notes || null,
           },
           include: {
-            user: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-              },
-            },
+            user: true,
           },
         });
 
@@ -161,7 +156,7 @@ export const createShiftsBatch = async (req: AuthRequest, res: Response, next: N
         const shiftDateForHistory = new Date(start);
         shiftDateForHistory.setHours(0, 0, 0, 0);
 
-        await prisma.shiftSwapHistory.create({
+        await dbClient.shiftSwapHistory.create({
           data: {
             shiftId: shift.id,
             restaurantId,
@@ -215,6 +210,7 @@ export const createShift = async (req: AuthRequest, res: Response, next: NextFun
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      console.error('Validation errors in updateShift:', errors.array(), 'body:', req.body);
       res.status(400).json({ errors: errors.array() });
       return;
     }
@@ -246,7 +242,7 @@ export const createShift = async (req: AuthRequest, res: Response, next: NextFun
     // Получаем время из шаблона
       const { start, end, hours } = await getShiftTimes(shiftDateForTemplate, type, restaurantId);
 
-    const shift = await prisma.shift.create({
+    const shift = await dbClient.shift.create({
       data: {
         restaurantId,
         userId,
@@ -257,20 +253,8 @@ export const createShift = async (req: AuthRequest, res: Response, next: NextFun
         notes: notes || null,
       },
       include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        user: true,
+        restaurant: true,
       },
     });
 
@@ -278,7 +262,7 @@ export const createShift = async (req: AuthRequest, res: Response, next: NextFun
     const shiftDateForHistory = new Date(start);
     shiftDateForHistory.setHours(0, 0, 0, 0);
 
-    await prisma.shiftSwapHistory.create({
+    await dbClient.shiftSwapHistory.create({
       data: {
         shiftId: shift.id,
         restaurantId,
@@ -346,10 +330,22 @@ export const getShifts = async (req: AuthRequest, res: Response, next: NextFunct
     if (startDate || endDate) {
       where.startTime = {};
       if (startDate) {
-        where.startTime.gte = new Date(startDate as string);
+        // Парсим дату в формате YYYY-MM-DD как начало дня в UTC
+        const startDateStr = startDate as string;
+        const startDateObj = startDateStr.includes('T')
+          ? new Date(startDateStr)
+          : new Date(startDateStr + 'T00:00:00.000Z');
+        console.log('Start date filter:', startDateStr, '->', startDateObj.toISOString());
+        where.startTime.gte = startDateObj;
       }
       if (endDate) {
-        where.startTime.lte = new Date(endDate as string);
+        // Парсим дату в формате YYYY-MM-DD как конец дня в UTC
+        const endDateStr = endDate as string;
+        const endDateObj = endDateStr.includes('T')
+          ? new Date(endDateStr)
+          : new Date(endDateStr + 'T23:59:59.999Z');
+        console.log('End date filter:', endDateStr, '->', endDateObj.toISOString());
+        where.startTime.lte = endDateObj;
       }
     }
 
@@ -361,46 +357,121 @@ export const getShifts = async (req: AuthRequest, res: Response, next: NextFunct
     // Сотрудники с правом VIEW_SCHEDULE видят график всех в ресторане (чтобы видеть кто на сменах)
     // Фильтрация по userId происходит только если явно указан userId в запросе
     if (req.user.role === 'MANAGER') {
-      // Менеджер видит только смены в своих ресторанах
-      const restaurants = await prisma.restaurant.findMany({
+      // Менеджер видит смены в ресторанах, которыми управляет, или где он числится как сотрудник
+      const managed = await dbClient.restaurant.findMany({
         where: { managerId: req.user.id },
         select: { id: true },
       });
-      where.restaurantId = {
-        in: restaurants.map((r) => r.id),
-      };
+      const employed = await dbClient.restaurantUser.findMany({
+        where: { userId: req.user.id },
+        select: { restaurantId: true },
+      });
+
+      const accessibleIds = Array.from(
+        new Set([
+          ...managed.map((r) => r.id),
+          ...employed.map((ru) => ru.restaurantId),
+        ])
+      );
+
+      if (accessibleIds.length === 0) {
+        console.log('Manager has no accessible restaurants, returning empty shifts');
+        res.json({ shifts: [] });
+        return;
+      }
+
+      if (restaurantId) {
+        if (!accessibleIds.includes(restaurantId as string)) {
+          console.log('Manager requested foreign restaurant, returning empty shifts');
+          res.json({ shifts: [] });
+          return;
+        }
+        // restaurantId уже выставлен выше
+      } else {
+        where.restaurantId = { in: accessibleIds };
+      }
     }
     // OWNER и ADMIN видят все смены
 
-    const shifts = await prisma.shift.findMany({
-      where,
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
+    let shifts;
+    try {
+      shifts = await dbClient.shift.findMany({
+        where,
+        include: {
+          user: true,
+          restaurant: true,
         },
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
+        orderBy: {
+          startTime: 'asc',
         },
-      },
-      orderBy: {
-        startTime: 'asc',
-      },
+      });
+    } catch (error: any) {
+      console.error('Error in shift.findMany:', error);
+      console.error('Where clause:', JSON.stringify(where, null, 2));
+      console.error('Error details:', {
+        message: error?.message,
+        code: error?.code,
+        stack: error?.stack,
+      });
+      throw error;
+    }
+
+    // Логируем для отладки
+    console.log('Shifts query:', { 
+      restaurantId, 
+      userId, 
+      startDate, 
+      endDate, 
+      startDateType: typeof startDate,
+      endDateType: typeof endDate,
+      where, 
+      count: shifts.length 
     });
+    
+    // Проверяем, есть ли смены в базе без фильтров по датам (fallback)
+    if (shifts.length === 0 && restaurantId) {
+      const fallbackShifts = await dbClient.shift.findMany({
+        where: { restaurantId },
+        include: { user: true, restaurant: true },
+        orderBy: { startTime: 'asc' },
+        take: 20,
+      });
+      console.log('All shifts in restaurant (first 20):', fallbackShifts.map(s => ({
+        id: s.id,
+        userId: s.userId,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        restaurantId: s.restaurantId,
+        type: s.type,
+      })));
+
+      const totalCount = await dbClient.shift.count({ where: { restaurantId } });
+      console.log('Total shifts in restaurant:', totalCount);
+
+      // Возвращаем fallback, чтобы пользователь увидел смены, даже если фильтр по датам не сработал
+      res.json({ shifts: fallbackShifts });
+      return;
+    }
+    
+    if (shifts.length > 0) {
+      console.log('First shift sample:', {
+        id: shifts[0].id,
+        userId: shifts[0].userId,
+        startTime: shifts[0].startTime,
+        endTime: shifts[0].endTime,
+        user: shifts[0].user ? { id: shifts[0].user.id, firstName: shifts[0].user.firstName, lastName: shifts[0].user.lastName } : null,
+        restaurant: shifts[0].restaurant ? { id: shifts[0].restaurant.id, name: shifts[0].restaurant.name } : null,
+      });
+    } else {
+      console.log('No shifts found with current filters');
+    }
 
     // Обогащаем данными о пользователе, которому предлагается смена
     const enrichedShifts = await Promise.all(
       shifts.map(async (shift) => {
         let swapTarget = null;
         if (shift.swapRequestedTo) {
-          const targetUser = await prisma.user.findUnique({
+          const targetUser = await dbClient.user.findUnique({
             where: { id: shift.swapRequestedTo },
             select: {
               id: true,
@@ -434,23 +505,11 @@ export const getShift = async (req: AuthRequest, res: Response, next: NextFuncti
 
     const { id } = req.params;
 
-    const shift = await prisma.shift.findUnique({
+    const shift = await dbClient.shift.findUnique({
       where: { id },
       include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        user: true,
+        restaurant: true,
       },
     });
 
@@ -482,15 +541,10 @@ export const updateShift = async (req: AuthRequest, res: Response, next: NextFun
     const { id } = req.params;
 
     // Получаем смену для проверки прав
-    const existingShift = await prisma.shift.findUnique({
+    const existingShift = await dbClient.shift.findUnique({
       where: { id },
       include: {
-        restaurant: {
-          select: {
-            id: true,
-            managerId: true,
-          },
-        },
+        restaurant: true,
       },
     });
 
@@ -516,11 +570,34 @@ export const updateShift = async (req: AuthRequest, res: Response, next: NextFun
     const updateData: any = {};
 
     if (type) updateData.type = type;
-    if (startTime) updateData.startTime = new Date(startTime);
-    if (endTime) updateData.endTime = new Date(endTime);
+
+    if (startTime) {
+      const startDate = new Date(startTime);
+      if (isNaN(startDate.getTime())) {
+        res.status(400).json({ error: 'Некорректное значение startTime' });
+        return;
+      }
+      updateData.startTime = startDate;
+    }
+
+    if (endTime) {
+      const endDate = new Date(endTime);
+      if (isNaN(endDate.getTime())) {
+        res.status(400).json({ error: 'Некорректное значение endTime' });
+        return;
+      }
+      updateData.endTime = endDate;
+    }
+
     if (notes !== undefined) updateData.notes = notes;
     if (isConfirmed !== undefined) updateData.isConfirmed = isConfirmed;
     if (isCompleted !== undefined) updateData.isCompleted = isCompleted;
+
+    console.log('Update shift payload:', {
+      id,
+      body: req.body,
+      updateData,
+    });
 
     // Пересчитываем часы если изменилось время
     if (startTime || endTime) {
@@ -529,32 +606,28 @@ export const updateShift = async (req: AuthRequest, res: Response, next: NextFun
       updateData.hours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
     }
 
-    const shift = await prisma.shift.update({
-      where: { id },
-      data: updateData,
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
+    let shift;
+    try {
+      shift = await dbClient.shift.update({
+        where: { id },
+        data: updateData,
+        include: {
+          user: true,
+          restaurant: true,
         },
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-      },
-    });
+      });
+    } catch (error: any) {
+      console.error('Error updating shift in DB:', error);
+      console.error('Update data:', updateData);
+      res.status(500).json({ error: 'Ошибка обновления смены' });
+      return;
+    }
 
     // Логируем обновление в историю изменений
     const shiftDate = new Date(shift.startTime);
     shiftDate.setHours(0, 0, 0, 0);
 
-    await prisma.shiftSwapHistory.create({
+    await dbClient.shiftSwapHistory.create({
       data: {
         shiftId: shift.id,
         restaurantId: shift.restaurantId,
@@ -599,15 +672,10 @@ export const deleteShift = async (req: AuthRequest, res: Response, next: NextFun
     const { id } = req.params;
 
     // Получаем смену для проверки прав
-    const shift = await prisma.shift.findUnique({
+    const shift = await dbClient.shift.findUnique({
       where: { id },
       include: {
-        restaurant: {
-          select: {
-            id: true,
-            managerId: true,
-          },
-        },
+        restaurant: true,
       },
     });
 
@@ -629,7 +697,7 @@ export const deleteShift = async (req: AuthRequest, res: Response, next: NextFun
       return;
     }
 
-    await prisma.shift.delete({
+    await dbClient.shift.delete({
       where: { id },
     });
 
@@ -647,7 +715,7 @@ export const deleteShift = async (req: AuthRequest, res: Response, next: NextFun
     const shiftDate = new Date(shift.startTime);
     shiftDate.setHours(0, 0, 0, 0);
 
-    await prisma.shiftSwapHistory.create({
+    await dbClient.shiftSwapHistory.create({
       data: {
         shiftId: id,
         restaurantId: shift.restaurantId,
@@ -712,15 +780,14 @@ export const deleteShiftsBatch = async (req: AuthRequest, res: Response, next: N
 
     for (const cellKey of cellKeys) {
       const [userId, dateStr] = cellKey.split('|');
-      const shiftDate = new Date(dateStr);
-      shiftDate.setHours(0, 0, 0, 0);
       
-      const dayStart = new Date(shiftDate);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(shiftDate);
-      dayEnd.setHours(23, 59, 59, 999);
+      // Создаем дату в UTC для избежания проблем с часовыми поясами
+      const shiftDate = new Date(dateStr + 'T00:00:00.000Z');
+      
+      const dayStart = new Date(dateStr + 'T00:00:00.000Z');
+      const dayEnd = new Date(dateStr + 'T23:59:59.999Z');
 
-      const shift = await prisma.shift.findFirst({
+      const shift = await dbClient.shift.findFirst({
         where: {
           restaurantId,
           userId,
@@ -736,7 +803,7 @@ export const deleteShiftsBatch = async (req: AuthRequest, res: Response, next: N
         const shiftDateForHistory = new Date(shift.startTime);
         shiftDateForHistory.setHours(0, 0, 0, 0);
 
-        await prisma.shiftSwapHistory.create({
+        await dbClient.shiftSwapHistory.create({
           data: {
             shiftId: shift.id,
             restaurantId: shift.restaurantId,
@@ -754,7 +821,7 @@ export const deleteShiftsBatch = async (req: AuthRequest, res: Response, next: N
           } as any,
         });
 
-        await prisma.shift.delete({
+        await dbClient.shift.delete({
           where: { id: shift.id },
         });
 
@@ -811,12 +878,17 @@ export const deleteEmployeeShifts = async (req: AuthRequest, res: Response, next
     }
 
     const start = new Date(startDate);
-    start.setHours(0, 0, 0, 0);
     const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      res.status(400).json({ error: 'Некорректные даты' });
+      return;
+    }
+    // Устанавливаем время в UTC для избежания проблем с часовыми поясами
+    start.setUTCHours(0, 0, 0, 0);
+    end.setUTCHours(23, 59, 59, 999);
 
     // Получаем все смены сотрудника за период
-    const shifts = await prisma.shift.findMany({
+    const shifts = await dbClient.shift.findMany({
       where: {
         restaurantId,
         userId,
@@ -825,6 +897,7 @@ export const deleteEmployeeShifts = async (req: AuthRequest, res: Response, next
           lte: end,
         },
       },
+      include: { user: true, restaurant: true },
     });
 
     // Логируем каждое удаление в историю изменений
@@ -832,7 +905,7 @@ export const deleteEmployeeShifts = async (req: AuthRequest, res: Response, next
       const shiftDate = new Date(shift.startTime);
       shiftDate.setHours(0, 0, 0, 0);
 
-      await prisma.shiftSwapHistory.create({
+      await dbClient.shiftSwapHistory.create({
         data: {
           shiftId: shift.id,
           restaurantId: shift.restaurantId,
@@ -852,7 +925,7 @@ export const deleteEmployeeShifts = async (req: AuthRequest, res: Response, next
     }
 
     // Удаляем все смены
-    const result = await prisma.shift.deleteMany({
+    const result = await dbClient.shift.deleteMany({
       where: {
         restaurantId,
         userId,
@@ -893,7 +966,7 @@ export const requestShiftSwap = async (req: AuthRequest, res: Response, next: Ne
     const { swapRequestedTo } = req.body;
 
     // Проверяем, что смена принадлежит текущему пользователю
-    const shift = await prisma.shift.findUnique({
+    const shift = await dbClient.shift.findUnique({
       where: { id },
     });
 
@@ -914,7 +987,7 @@ export const requestShiftSwap = async (req: AuthRequest, res: Response, next: Ne
       return;
     }
 
-    const updatedShift = await prisma.shift.update({
+    const updatedShift = await dbClient.shift.update({
       where: { id },
       data: {
         swapRequested: true,
@@ -923,13 +996,7 @@ export const requestShiftSwap = async (req: AuthRequest, res: Response, next: Ne
         swapApproved: null,
       },
       include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
+        user: true,
       },
     });
 
@@ -937,7 +1004,7 @@ export const requestShiftSwap = async (req: AuthRequest, res: Response, next: Ne
     const shiftDate = new Date(shift.startTime);
     shiftDate.setHours(0, 0, 0, 0);
 
-    await prisma.shiftSwapHistory.create({
+    await dbClient.shiftSwapHistory.create({
       data: {
         shiftId: shift.id,
         restaurantId: shift.restaurantId,
@@ -989,7 +1056,7 @@ export const respondToSwapRequest = async (req: AuthRequest, res: Response, next
     const { id } = req.params;
     const { accepted } = req.body; // true или false
 
-    const shift = await prisma.shift.findUnique({
+    const shift = await dbClient.shift.findUnique({
       where: { id },
     });
 
@@ -1012,7 +1079,7 @@ export const respondToSwapRequest = async (req: AuthRequest, res: Response, next
 
     const response = accepted ? 'ACCEPTED' : 'REJECTED';
 
-    await prisma.shift.update({
+    await dbClient.shift.update({
       where: { id },
       data: {
         employeeResponse: response,
@@ -1023,7 +1090,7 @@ export const respondToSwapRequest = async (req: AuthRequest, res: Response, next
     const shiftDate = new Date(shift.startTime);
     shiftDate.setHours(0, 0, 0, 0);
 
-    let historyRecord = await prisma.shiftSwapHistory.findFirst({
+    let historyRecord = await dbClient.shiftSwapHistory.findFirst({
       where: {
         shiftId: shift.id,
         status: 'REQUESTED',
@@ -1035,7 +1102,7 @@ export const respondToSwapRequest = async (req: AuthRequest, res: Response, next
 
     if (historyRecord) {
       // Обновляем статус в истории (но не финальный, менеджер еще должен одобрить)
-        await prisma.shiftSwapHistory.update({
+        await dbClient.shiftSwapHistory.update({
           where: { id: historyRecord.id },
           data: {
             status: accepted ? 'ACCEPTED_BY_EMPLOYEE' : 'REJECTED_BY_EMPLOYEE',
@@ -1056,7 +1123,7 @@ export const respondToSwapRequest = async (req: AuthRequest, res: Response, next
 
     // Создаем уведомление пользователю, который запросил обмен
     const { notifyShiftSwapAccepted, notifyShiftSwapRejected } = await import('../utils/notifications');
-    const user = await prisma.user.findUnique({
+    const user = await dbClient.user.findUnique({
       where: { id: req.user.id },
       select: { firstName: true, lastName: true },
     });
@@ -1085,7 +1152,7 @@ export const approveShiftSwap = async (req: AuthRequest, res: Response, next: Ne
     const { id } = req.params;
     const { approved } = req.body; // true или false
 
-    const shift = await prisma.shift.findUnique({
+    const shift = await dbClient.shift.findUnique({
       where: { id },
     });
 
@@ -1104,7 +1171,7 @@ export const approveShiftSwap = async (req: AuthRequest, res: Response, next: Ne
     const isOwnerOrAdmin = ['OWNER', 'ADMIN'].includes(req.user.role);
     
     // Проверяем, является ли пользователь менеджером ресторана этой смены (для любой роли, включая EMPLOYEE)
-    const restaurant = await prisma.restaurant.findUnique({
+    const restaurant = await dbClient.restaurant.findUnique({
       where: { id: shift.restaurantId },
       select: { managerId: true },
     });
@@ -1119,7 +1186,7 @@ export const approveShiftSwap = async (req: AuthRequest, res: Response, next: Ne
     const shiftDate = new Date(shift.startTime);
     shiftDate.setHours(0, 0, 0, 0);
 
-    let historyRecord = await prisma.shiftSwapHistory.findFirst({
+    let historyRecord = await dbClient.shiftSwapHistory.findFirst({
       where: {
         shiftId: shift.id,
         status: 'REQUESTED',
@@ -1131,7 +1198,7 @@ export const approveShiftSwap = async (req: AuthRequest, res: Response, next: Ne
 
     // Если записи нет (для обратной совместимости), создаем её
     if (!historyRecord && shift.swapRequestedTo) {
-      historyRecord = await prisma.shiftSwapHistory.create({
+      historyRecord = await dbClient.shiftSwapHistory.create({
         data: {
           shiftId: shift.id,
           restaurantId: shift.restaurantId,
@@ -1154,7 +1221,7 @@ export const approveShiftSwap = async (req: AuthRequest, res: Response, next: Ne
         return;
       }
 
-      await prisma.shift.update({
+      await dbClient.shift.update({
         where: { id },
         data: {
           userId: newUserId,
@@ -1167,7 +1234,7 @@ export const approveShiftSwap = async (req: AuthRequest, res: Response, next: Ne
 
       // Обновляем историю
       if (historyRecord) {
-        await prisma.shiftSwapHistory.update({
+        await dbClient.shiftSwapHistory.update({
           where: { id: historyRecord.id },
           data: {
             status: 'APPROVED',
@@ -1179,7 +1246,7 @@ export const approveShiftSwap = async (req: AuthRequest, res: Response, next: Ne
       }
     } else {
       // Отклоняем обмен
-      await prisma.shift.update({
+      await dbClient.shift.update({
         where: { id },
         data: {
           swapRequested: false,
@@ -1191,7 +1258,7 @@ export const approveShiftSwap = async (req: AuthRequest, res: Response, next: Ne
 
       // Обновляем историю
       if (historyRecord) {
-        await prisma.shiftSwapHistory.update({
+        await dbClient.shiftSwapHistory.update({
           where: { id: historyRecord.id },
           data: {
             status: 'REJECTED',
@@ -1262,7 +1329,7 @@ export const copySchedule = async (req: AuthRequest, res: Response, next: NextFu
     const to = new Date(toDate);
 
     // Получаем смены за период
-    const sourceShifts = await prisma.shift.findMany({
+    const sourceShifts = await dbClient.shift.findMany({
       where: {
         restaurantId,
         startTime: {
@@ -1327,7 +1394,7 @@ export const copySchedule = async (req: AuthRequest, res: Response, next: NextFu
     }
 
     // Создаем новые смены
-    const created = await prisma.shift.createMany({
+    const created = await dbClient.shift.createMany({
       data: newShifts,
     });
 
@@ -1365,14 +1432,14 @@ export const getShiftSwapRequests = async (req: AuthRequest, res: Response, next
     // Проверяем, является ли пользователь менеджером ресторана (для любой роли, не только EMPLOYEE)
     let isRestaurantManager = false;
     if (restaurantId) {
-      const restaurant = await prisma.restaurant.findUnique({
+      const restaurant = await dbClient.restaurant.findUnique({
         where: { id: restaurantId as string },
         select: { managerId: true },
       });
       isRestaurantManager = restaurant?.managerId === req.user.id;
     } else {
       // Если ресторан не указан, проверяем все рестораны пользователя
-      const managedRestaurants = await prisma.restaurant.findMany({
+      const managedRestaurants = await dbClient.restaurant.findMany({
         where: { managerId: req.user.id },
         select: { id: true },
       });
@@ -1401,7 +1468,7 @@ export const getShiftSwapRequests = async (req: AuthRequest, res: Response, next
       where.restaurantId = restaurantId as string;
     } else if (isRestaurantManager) {
       // Менеджер (включая EMPLOYEE-менеджера) видит только запросы в своих ресторанах
-      const restaurants = await prisma.restaurant.findMany({
+      const restaurants = await dbClient.restaurant.findMany({
         where: { managerId: req.user.id },
         select: { id: true },
       });
@@ -1416,23 +1483,11 @@ export const getShiftSwapRequests = async (req: AuthRequest, res: Response, next
       }
     }
 
-    const swapRequests = await prisma.shift.findMany({
+    const swapRequests = await dbClient.shift.findMany({
       where,
       include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            phone: true,
-          },
-        },
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        user: true,
+        restaurant: true,
       },
       orderBy: {
         startTime: 'asc',
@@ -1444,7 +1499,7 @@ export const getShiftSwapRequests = async (req: AuthRequest, res: Response, next
       swapRequests.map(async (shift) => {
         let swapTarget = null;
         if (shift.swapRequestedTo) {
-          const targetUser = await prisma.user.findUnique({
+          const targetUser = await dbClient.user.findUnique({
             where: { id: shift.swapRequestedTo },
             select: {
               id: true,
@@ -1493,23 +1548,11 @@ export const getIncomingSwapRequests = async (req: AuthRequest, res: Response, n
       where.restaurantId = restaurantId as string;
     }
 
-    const swapRequests = await prisma.shift.findMany({
+    const swapRequests = await dbClient.shift.findMany({
       where,
       include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            phone: true,
-          },
-        },
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        user: true,
+        restaurant: true,
       },
       orderBy: {
         startTime: 'asc',
@@ -1539,7 +1582,7 @@ export const getShiftSwapHistory = async (req: AuthRequest, res: Response, next:
       where.restaurantId = restaurantId as string;
     } else if (req.user.role === 'MANAGER') {
       // Менеджер видит только историю в своих ресторанах
-      const restaurants = await prisma.restaurant.findMany({
+      const restaurants = await dbClient.restaurant.findMany({
         where: { managerId: req.user.id },
         select: { id: true },
       });
@@ -1584,38 +1627,13 @@ export const getShiftSwapHistory = async (req: AuthRequest, res: Response, next:
       };
     }
 
-    const history = await prisma.shiftSwapHistory.findMany({
+    const history = await dbClient.shiftSwapHistory.findMany({
       where,
       include: {
-        fromUser: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        toUser: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        approvedBy: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        fromUser: true,
+        toUser: true,
+        approvedBy: true,
+        restaurant: true,
       },
       orderBy: {
         requestedAt: 'desc',

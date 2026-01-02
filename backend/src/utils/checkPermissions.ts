@@ -1,5 +1,8 @@
-import prisma from './prisma';
+import dbClient from './db';
 import { PERMISSIONS, PermissionCode, MANAGER_AUTO_PERMISSIONS, DEFAULT_EMPLOYEE_PERMISSIONS } from './permissions';
+
+// Re-export PermissionCode for external use
+export type { PermissionCode };
 
 /**
  * Проверяет, имеет ли пользователь указанное право в конкретном ресторане
@@ -10,7 +13,7 @@ export async function checkPermission(
   permission: PermissionCode
 ): Promise<boolean> {
   // Получаем пользователя
-  const user = await prisma.user.findUnique({
+  const user = await dbClient.user.findUnique({
     where: { id: userId },
     select: { role: true },
   });
@@ -25,7 +28,7 @@ export async function checkPermission(
   }
 
   // Проверяем, является ли пользователь менеджером этого ресторана
-  const restaurant = await prisma.restaurant.findUnique({
+  const restaurant = await dbClient.restaurant.findUnique({
     where: { id: restaurantId },
     select: { managerId: true },
   });
@@ -36,7 +39,7 @@ export async function checkPermission(
   }
 
   // Получаем информацию о работе пользователя в ресторане
-  const restaurantUser = await prisma.restaurantUser.findFirst({
+  const restaurantUser = await dbClient.restaurantUser.findFirst({
     where: {
       userId,
       restaurantId,
@@ -86,7 +89,7 @@ export async function getUserPermissions(
   userId: string,
   restaurantId: string
 ): Promise<PermissionCode[]> {
-  const user = await prisma.user.findUnique({
+  const user = await dbClient.user.findUnique({
     where: { id: userId },
     select: { role: true },
   });
@@ -101,7 +104,7 @@ export async function getUserPermissions(
   }
 
   // Проверяем, является ли пользователь менеджером
-  const restaurant = await prisma.restaurant.findUnique({
+  const restaurant = await dbClient.restaurant.findUnique({
     where: { id: restaurantId },
     select: { managerId: true },
   });
@@ -111,7 +114,7 @@ export async function getUserPermissions(
   }
 
   // Получаем права должности
-  const restaurantUser = await prisma.restaurantUser.findFirst({
+  const restaurantUser = await dbClient.restaurantUser.findFirst({
     where: {
       userId,
       restaurantId,

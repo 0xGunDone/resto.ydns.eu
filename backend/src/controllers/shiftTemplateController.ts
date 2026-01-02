@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
 
@@ -10,21 +10,29 @@ export const getShiftTemplates = async (req: AuthRequest, res: Response, next: N
     const { restaurantId } = req.query;
 
     const where: any = {
-      isActive: true,
+      // Показываем все типы смен, не только активные (для админки)
     };
 
     if (restaurantId) {
-      where.restaurantId = restaurantId as string;
+      // Показываем типы смен для конкретного ресторана И общие (null)
+      where.OR = [
+        { restaurantId: restaurantId as string },
+        { restaurantId: null },
+      ];
     } else {
-      where.restaurantId = null; // Общие шаблоны
+      // Если restaurantId не указан, показываем только общие шаблоны
+      where.restaurantId = null;
     }
 
-    const templates = await prisma.shiftTemplate.findMany({
+    const templates = await dbClient.shiftTemplate.findMany({
       where,
       orderBy: {
         startHour: 'asc',
       },
     });
+
+    // Логируем для отладки
+    console.log('Shift templates query:', { restaurantId, where, count: templates.length });
 
     res.json({ templates });
   } catch (error) {
@@ -60,7 +68,7 @@ export const createShiftTemplate = async (req: AuthRequest, res: Response, next:
       return;
     }
 
-    const template = await prisma.shiftTemplate.create({
+    const template = await dbClient.shiftTemplate.create({
       data: {
         restaurantId: restaurantId || null,
         name,
@@ -134,7 +142,7 @@ export const updateShiftTemplate = async (req: AuthRequest, res: Response, next:
     if (rate !== undefined) updateData.rate = parseFloat(String(rate)) || 0;
     if (isActive !== undefined) updateData.isActive = isActive;
 
-    const template = await prisma.shiftTemplate.update({
+    const template = await dbClient.shiftTemplate.update({
       where: { id },
       data: updateData,
     });
@@ -175,7 +183,7 @@ export const deleteShiftTemplate = async (req: AuthRequest, res: Response, next:
     const { id } = req.params;
 
     // Проверяем, используется ли шаблон в сменах
-    const shiftsCount = await prisma.shift.count({
+    const shiftsCount = await dbClient.shift.count({
       where: {
         type: id,
       },
@@ -183,7 +191,7 @@ export const deleteShiftTemplate = async (req: AuthRequest, res: Response, next:
 
     if (shiftsCount > 0) {
       // Вместо удаления деактивируем
-      const template = await prisma.shiftTemplate.update({
+      const template = await dbClient.shiftTemplate.update({
         where: { id },
         data: { isActive: false },
       });
@@ -205,7 +213,7 @@ export const deleteShiftTemplate = async (req: AuthRequest, res: Response, next:
       return;
     }
 
-    await prisma.shiftTemplate.delete({
+    await dbClient.shiftTemplate.delete({
       where: { id },
     });
 

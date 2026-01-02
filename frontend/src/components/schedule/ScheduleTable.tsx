@@ -185,18 +185,18 @@ export default function ScheduleTable({
                                 : ''
                             } ${isSelected ? 'bg-blue-200 ring-2 ring-blue-500' : ''}`}
                             onClick={(e) => handleCellClick(employee.id, day, shift, e)}
+                            onDoubleClick={(e) => {
+                              if (shift && canInline) {
+                                e.stopPropagation();
+                                handleStartInline(cellKey, shift);
+                              }
+                            }}
                           >
                             {shift ? (
                               <div className="flex flex-col items-center gap-1">
                                 {!isInline && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (canInline) {
-                                        handleStartInline(cellKey, shift);
-                                      }
-                                    }}
-                                    className="inline-block px-2 py-1 rounded text-xs text-white font-medium"
+                                  <span
+                                    className="inline-block px-2 py-1 rounded text-xs text-white font-medium select-none"
                                     style={{
                                       backgroundColor: shiftTemplate?.color || shiftTypeColors[shift.type] || '#gray',
                                     }}
@@ -204,7 +204,7 @@ export default function ScheduleTable({
                                   >
                                     {shiftTemplate ? shiftTemplate.name.substring(0, 1).toUpperCase() : shiftTypeLabels[shift.type] || shift.type}
                                     {shift.swapRequested && ' ⚠️'}
-                                  </button>
+                                  </span>
                                 )}
 
                                 {isInline && canInline && (

@@ -6,7 +6,7 @@
 
 ### Backend
 - Node.js + Express + TypeScript
-- SQLite + Prisma ORM
+- SQLite (better-sqlite3)
 - JWT аутентификация + 2FA
 - Multer для загрузки файлов
 - QR-коды для задач
@@ -66,7 +66,7 @@ resto.ydns.eu/
 │   │   ├── routes/
 │   │   ├── middleware/
 │   │   └── utils/
-│   └── prisma/       # Схема БД и миграции
+│   └── dev.db        # SQLite база данных
 ├── frontend/         # React приложение
 │   └── src/
 │       ├── pages/
@@ -82,9 +82,7 @@ resto.ydns.eu/
 cd backend
 npm run dev          # Запуск в режиме разработки
 npm run build        # Сборка
-npm run db:migrate   # Применить миграции
-npm run db:seed      # Заполнить начальными данными
-npm run db:studio    # Открыть Prisma Studio
+npm run db:init      # Инициализация БД (создание таблиц и начальных данных)
 ```
 
 ### Frontend

@@ -828,8 +828,8 @@ function TaskDetailModal({
     }
   };
 
-  const canEdit = user?.id === task.createdBy.id || ['OWNER', 'ADMIN', 'MANAGER'].includes(user?.role || '');
-  const canDelete = user?.id === task.createdBy.id || ['OWNER', 'ADMIN', 'MANAGER'].includes(user?.role || '');
+  const canEdit = user?.id === task.createdBy?.id || ['OWNER', 'ADMIN', 'MANAGER'].includes(user?.role || '');
+  const canDelete = user?.id === task.createdBy?.id || ['OWNER', 'ADMIN', 'MANAGER'].includes(user?.role || '');
 
   return (
     <>
@@ -887,7 +887,7 @@ function TaskDetailModal({
             {task.description && <p className="text-gray-700">{task.description}</p>}
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
-                <span className="font-medium">Создал:</span> {task.createdBy.firstName} {task.createdBy.lastName}
+                <span className="font-medium">Создал:</span> {task.createdBy?.firstName} {task.createdBy?.lastName}
               </div>
               {task.assignedTo && (
                 <div>

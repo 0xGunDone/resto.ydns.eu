@@ -1,4 +1,4 @@
-import prisma from './prisma';
+import dbClient from './db';
 
 export type NotificationType =
   | 'TASK_ASSIGNED'
@@ -30,7 +30,7 @@ interface CreateNotificationParams {
 export async function createNotification(params: CreateNotificationParams): Promise<void> {
   try {
     // Создаем in-app уведомление
-    const notification = await prisma.notification.create({
+    const notification = await dbClient.notification.create({
       data: {
         userId: params.userId,
         type: params.type,

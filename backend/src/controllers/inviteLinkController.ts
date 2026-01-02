@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
 import crypto from 'crypto';
@@ -28,7 +28,7 @@ export const createInviteLink = async (req: AuthRequest, res: Response, next: Ne
 
     // Проверка доступа к ресторану
     if (req.user.role !== 'OWNER' && req.user.role !== 'ADMIN') {
-      const restaurant = await prisma.restaurant.findUnique({
+      const restaurant = await dbClient.restaurant.findUnique({
         where: { id: restaurantId },
         select: { managerId: true },
       });
@@ -40,7 +40,7 @@ export const createInviteLink = async (req: AuthRequest, res: Response, next: Ne
     }
 
     // Проверяем, что ресторан существует
-    const restaurant = await prisma.restaurant.findUnique({
+    const restaurant = await dbClient.restaurant.findUnique({
       where: { id: restaurantId },
     });
 
@@ -51,12 +51,12 @@ export const createInviteLink = async (req: AuthRequest, res: Response, next: Ne
 
     // Генерируем уникальный токен
     let token = generateToken();
-    while (await (prisma as any).inviteLink.findUnique({ where: { token } })) {
+    while (await dbClient.inviteLink.findUnique({ where: { token } })) {
       token = generateToken();
     }
 
     // Создаем пригласительную ссылку
-    const inviteLink = await (prisma as any).inviteLink.create({
+    const inviteLink = await dbClient.inviteLink.create({
       data: {
         token,
         restaurantId,
@@ -68,24 +68,9 @@ export const createInviteLink = async (req: AuthRequest, res: Response, next: Ne
         isActive: true,
       },
       include: {
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        position: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        department: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        restaurant: true,
+        position: true,
+        department: true,
       },
     });
 
@@ -142,7 +127,7 @@ export const getInviteLinks = async (req: AuthRequest, res: Response, next: Next
       
       // Проверка доступа
       if (req.user.role !== 'OWNER' && req.user.role !== 'ADMIN') {
-        const restaurant = await prisma.restaurant.findUnique({
+        const restaurant = await dbClient.restaurant.findUnique({
           where: { id: restaurantId as string },
           select: { managerId: true },
         });
@@ -155,7 +140,7 @@ export const getInviteLinks = async (req: AuthRequest, res: Response, next: Next
     } else {
       // Если ресторан не указан, показываем только свои рестораны (для менеджеров)
       if (req.user.role !== 'OWNER' && req.user.role !== 'ADMIN') {
-        const restaurants = await prisma.restaurant.findMany({
+        const restaurants = await dbClient.restaurant.findMany({
           where: { managerId: req.user.id },
           select: { id: true },
         });
@@ -163,34 +148,13 @@ export const getInviteLinks = async (req: AuthRequest, res: Response, next: Next
       }
     }
 
-    const inviteLinks = await (prisma as any).inviteLink.findMany({
+    const inviteLinks = await dbClient.inviteLink.findMany({
       where,
       include: {
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        position: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        department: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        createdBy: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
+        restaurant: true,
+        position: true,
+        department: true,
+        createdBy: true,
       },
       orderBy: {
         createdAt: 'desc',
@@ -220,27 +184,12 @@ export const getInviteLinkByToken = async (req: Request, res: Response, next: Ne
       return;
     }
 
-    const inviteLink = await (prisma as any).inviteLink.findUnique({
+    const inviteLink = await dbClient.inviteLink.findUnique({
       where: { token },
       include: {
-        restaurant: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        position: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        department: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        restaurant: true,
+        position: true,
+        department: true,
       },
     });
 
@@ -281,12 +230,10 @@ export const deactivateInviteLink = async (req: AuthRequest, res: Response, next
 
     const { id } = req.params;
 
-    const inviteLink = await (prisma as any).inviteLink.findUnique({
+    const inviteLink = await dbClient.inviteLink.findUnique({
       where: { id },
       include: {
-        restaurant: {
-          select: { managerId: true },
-        },
+        restaurant: true,
       },
     });
 
@@ -303,7 +250,7 @@ export const deactivateInviteLink = async (req: AuthRequest, res: Response, next
       }
     }
 
-    await (prisma as any).inviteLink.update({
+    await dbClient.inviteLink.update({
       where: { id },
       data: { isActive: false },
     });
@@ -335,7 +282,7 @@ export const useInviteLink = async (req: Request, res: Response, next: NextFunct
       return;
     }
 
-    const inviteLink = await (prisma as any).inviteLink.findUnique({
+    const inviteLink = await dbClient.inviteLink.findUnique({
       where: { token },
     });
 
@@ -360,12 +307,10 @@ export const useInviteLink = async (req: Request, res: Response, next: NextFunct
     }
 
     // Увеличиваем счетчик использований
-    await (prisma as any).inviteLink.update({
+    await dbClient.inviteLink.update({
       where: { id: inviteLink.id },
       data: {
-        usedCount: {
-          increment: 1,
-        },
+        usedCount: { increment: 1 },
       },
     });
 
@@ -392,7 +337,7 @@ export const createTelegramBindLink = async (req: AuthRequest, res: Response, ne
     }
 
     // Проверяем, не привязан ли уже Telegram
-    const user = await prisma.user.findUnique({
+    const user = await dbClient.user.findUnique({
       where: { id: req.user.id },
       select: { telegramId: true } as any,
     });
@@ -404,12 +349,12 @@ export const createTelegramBindLink = async (req: AuthRequest, res: Response, ne
 
     // Генерируем уникальный токен
     let token = generateToken();
-    while (await (prisma as any).inviteLink.findUnique({ where: { token } })) {
+    while (await dbClient.inviteLink.findUnique({ where: { token } })) {
       token = generateToken();
     }
 
     // Создаем ссылку для привязки (без restaurantId)
-    const inviteLink = await (prisma as any).inviteLink.create({
+    const inviteLink = await dbClient.inviteLink.create({
       data: {
         token,
         restaurantId: null, // Ссылка для привязки не требует ресторана

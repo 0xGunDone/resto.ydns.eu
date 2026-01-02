@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
 
@@ -14,10 +14,10 @@ export const getDepartments = async (req: AuthRequest, res: Response, next: Next
 
     const { restaurantId } = req.params;
 
-    const departments = await prisma.department.findMany({
+    const departments = await dbClient.department.findMany({
       where: {
         restaurantId,
-        isActive: true,
+        // Показываем все отделы, не только активные (для админки)
       },
       orderBy: { name: 'asc' },
     });
@@ -50,7 +50,7 @@ export const createDepartment = async (req: AuthRequest, res: Response, next: Ne
     const { restaurantId } = req.params;
     const { name } = req.body;
 
-    const department = await prisma.department.create({
+    const department = await dbClient.department.create({
       data: {
         restaurantId,
         name,
@@ -96,7 +96,7 @@ export const updateDepartment = async (req: AuthRequest, res: Response, next: Ne
     const { id } = req.params;
     const { name, isActive } = req.body;
 
-    const department = await prisma.department.update({
+    const department = await dbClient.department.update({
       where: { id },
       data: {
         name,
@@ -136,13 +136,13 @@ export const deleteDepartment = async (req: AuthRequest, res: Response, next: Ne
     const { id } = req.params;
 
     // Проверяем, есть ли сотрудники в отделе
-    const employeesCount = await prisma.restaurantUser.count({
+    const employeesCount = await dbClient.restaurantUser.count({
       where: { departmentId: id },
     });
 
     if (employeesCount > 0) {
       // Деактивируем вместо удаления
-      const department = await prisma.department.update({
+      const department = await dbClient.department.update({
         where: { id },
         data: { isActive: false },
       });
@@ -164,7 +164,7 @@ export const deleteDepartment = async (req: AuthRequest, res: Response, next: Ne
       return;
     }
 
-    await prisma.department.delete({
+    await dbClient.department.delete({
       where: { id },
     });
 

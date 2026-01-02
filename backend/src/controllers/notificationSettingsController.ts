@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { AuthRequest } from '../middleware/auth';
 
 // Получение настроек уведомлений
@@ -10,13 +10,13 @@ export const getSettings = async (req: AuthRequest, res: Response, next: NextFun
       return;
     }
 
-    let settings = await prisma.notificationSettings.findUnique({
+    let settings = await dbClient.notificationSettings.findUnique({
       where: { userId: req.user.id },
     });
 
     // Если настроек нет, создаем с дефолтными значениями
     if (!settings) {
-      settings = await prisma.notificationSettings.create({
+      settings = await dbClient.notificationSettings.create({
         data: {
           userId: req.user.id,
         },
@@ -47,13 +47,13 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
     } = req.body;
 
     // Проверяем существование настроек
-    let settings = await prisma.notificationSettings.findUnique({
+    let settings = await dbClient.notificationSettings.findUnique({
       where: { userId: req.user.id },
     });
 
     if (!settings) {
       // Создаем новые настройки
-      settings = await prisma.notificationSettings.create({
+      settings = await dbClient.notificationSettings.create({
         data: {
           userId: req.user.id,
           enablePushNotifications: enablePushNotifications !== undefined ? enablePushNotifications : true,
@@ -74,7 +74,7 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       if (enableTimesheetNotifications !== undefined) updateData.enableTimesheetNotifications = enableTimesheetNotifications;
       if (enableInAppNotifications !== undefined) updateData.enableInAppNotifications = enableInAppNotifications;
 
-      settings = await prisma.notificationSettings.update({
+      settings = await dbClient.notificationSettings.update({
         where: { userId: req.user.id },
         data: updateData,
       });

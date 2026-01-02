@@ -297,7 +297,7 @@ export default function BonusPenaltyModal({
                         <p className="text-sm text-gray-600 mb-1">{bonus.comment}</p>
                       )}
                       <p className="text-xs text-gray-500">
-                        Начислил: {bonus.createdBy.firstName} {bonus.createdBy.lastName} • {format(new Date(bonus.createdAt), 'dd.MM.yyyy HH:mm', { locale: ru })}
+                        Начислил: {bonus.createdBy ? `${bonus.createdBy.firstName} ${bonus.createdBy.lastName}` : 'Неизвестный'} • {format(new Date(bonus.createdAt), 'dd.MM.yyyy HH:mm', { locale: ru })}
                       </p>
                     </div>
                     {canEdit && (
@@ -402,7 +402,7 @@ export default function BonusPenaltyModal({
                         <p className="text-sm text-gray-600 mb-1">{penalty.comment}</p>
                       )}
                       <p className="text-xs text-gray-500">
-                        Назначил: {penalty.createdBy.firstName} {penalty.createdBy.lastName} • {format(new Date(penalty.createdAt), 'dd.MM.yyyy HH:mm', { locale: ru })}
+                        Назначил: {penalty.createdBy ? `${penalty.createdBy.firstName} ${penalty.createdBy.lastName}` : 'Неизвестный'} • {format(new Date(penalty.createdAt), 'dd.MM.yyyy HH:mm', { locale: ru })}
                       </p>
                     </div>
                     {canEdit && (

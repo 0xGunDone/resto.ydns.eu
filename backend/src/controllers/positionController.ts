@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
 
@@ -14,10 +14,10 @@ export const getPositions = async (req: AuthRequest, res: Response, next: NextFu
 
     const { restaurantId } = req.params;
 
-    const positions = await prisma.position.findMany({
+    const positions = await dbClient.position.findMany({
       where: {
         restaurantId,
-        isActive: true,
+        // Показываем все должности, не только активные (для админки)
       },
       orderBy: { name: 'asc' },
     });
@@ -64,7 +64,7 @@ export const createPosition = async (req: AuthRequest, res: Response, next: Next
         : 0,
     };
 
-    const position = await prisma.position.create({
+    const position = await dbClient.position.create({
       data: createData,
     });
 
@@ -115,7 +115,7 @@ export const updatePosition = async (req: AuthRequest, res: Response, next: Next
       updateData.bonusPerShift = parseFloat(String(bonusPerShift)) || 0;
     }
 
-    const position = await prisma.position.update({
+    const position = await dbClient.position.update({
       where: { id },
       data: updateData,
     });
@@ -152,13 +152,13 @@ export const deletePosition = async (req: AuthRequest, res: Response, next: Next
     const { id } = req.params;
 
     // Проверяем, есть ли сотрудники с этой должностью
-    const employeesCount = await prisma.restaurantUser.count({
+    const employeesCount = await dbClient.restaurantUser.count({
       where: { positionId: id },
     });
 
     if (employeesCount > 0) {
       // Деактивируем вместо удаления
-      const position = await prisma.position.update({
+      const position = await dbClient.position.update({
         where: { id },
         data: { isActive: false },
       });
@@ -180,7 +180,7 @@ export const deletePosition = async (req: AuthRequest, res: Response, next: Next
       return;
     }
 
-    await prisma.position.delete({
+    await dbClient.position.delete({
       where: { id },
     });
 

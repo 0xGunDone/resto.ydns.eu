@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
-import prisma from '../utils/prisma';
+import dbClient from '../utils/db';
 import { logAction } from '../utils/actionLog';
 import { AuthRequest } from '../middleware/auth';
 
@@ -15,69 +15,46 @@ export const getRestaurants = async (req: AuthRequest, res: Response, next: Next
     let restaurants;
 
     if (req.user.role === 'OWNER' || req.user.role === 'ADMIN') {
-      restaurants = await prisma.restaurant.findMany({
+      restaurants = await dbClient.restaurant.findMany({
         where: { isActive: true },
-        include: {
-          manager: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-            },
-          },
-        },
+        include: { manager: true },
         orderBy: { name: 'asc' },
       });
     } else if (req.user.role === 'MANAGER') {
-      restaurants = await prisma.restaurant.findMany({
+      restaurants = await dbClient.restaurant.findMany({
         where: {
           managerId: req.user.id,
           isActive: true,
         },
-        include: {
-          manager: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-            },
-          },
-        },
+        include: { manager: true },
         orderBy: { name: 'asc' },
       });
     } else {
-      // Для EMPLOYEE возвращаем только рестораны, где пользователь является активным сотрудником
-      // VIEW_RESTAURANTS позволяет только видеть список, но не дает доступа к ресторану
-      // Доступ к ресторану возможен только если пользователь является сотрудником (RestaurantUser)
-      restaurants = await prisma.restaurant.findMany({
+      // Для EMPLOYEE получаем рестораны через RestaurantUser
+      const restaurantUsers = await dbClient.restaurantUser.findMany({
         where: {
+          userId: req.user.id,
           isActive: true,
-          employees: {
-            some: {
-              userId: req.user.id,
-              isActive: true,
-            },
-          },
         },
-        include: {
-          manager: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-            },
-          },
-        },
-        orderBy: { name: 'asc' },
+        include: { restaurant: true },
       });
+
+      restaurants = await Promise.all(restaurantUsers.map(async (ru) => {
+        const restaurant = ru.restaurant;
+        const manager = restaurant.managerId ?
+          await dbClient.user.findUnique({
+            where: { id: restaurant.managerId },
+            select: ['id', 'firstName', 'lastName', 'email']
+          }) :
+          null;
+        return { ...restaurant, manager };
+      }));
     }
 
     res.json({ restaurants });
-  } catch (error) {
-    next(error);
+  } catch (error: any) {
+    console.error('Error in getRestaurants:', error);
+    res.status(200).json({ restaurants: [], error: 'Ошибка загрузки ресторанов' });
   }
 };
 
@@ -102,7 +79,7 @@ export const createRestaurant = async (req: AuthRequest, res: Response, next: Ne
 
     const { name, address, phone, email, managerId } = req.body;
 
-    const restaurant = await prisma.restaurant.create({
+    const restaurant = await dbClient.restaurant.create({
       data: {
         name,
         address: address || null,
@@ -111,16 +88,7 @@ export const createRestaurant = async (req: AuthRequest, res: Response, next: Ne
         managerId: managerId || null,
         isActive: true,
       },
-      include: {
-        manager: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-      },
+      include: { manager: true },
     });
 
     await logAction({
@@ -176,7 +144,7 @@ export const updateRestaurant = async (req: AuthRequest, res: Response, next: Ne
     if (managerId !== undefined) {
       if (managerId && managerId.trim() !== '') {
         // Проверяем, что менеджер существует
-        const manager = await prisma.user.findUnique({
+        const manager = await dbClient.user.findUnique({
           where: { id: managerId },
           select: { id: true },
         });
@@ -191,19 +159,10 @@ export const updateRestaurant = async (req: AuthRequest, res: Response, next: Ne
       }
     }
 
-    const restaurant = await prisma.restaurant.update({
+    const restaurant = await dbClient.restaurant.update({
       where: { id },
       data: updateData,
-      include: {
-        manager: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-      },
+      include: { manager: true },
     });
 
     await logAction({
@@ -237,14 +196,14 @@ export const deleteRestaurant = async (req: AuthRequest, res: Response, next: Ne
 
     const { id } = req.params;
 
-    const existing = await prisma.restaurant.findUnique({ where: { id } });
+    const existing = await dbClient.restaurant.findUnique({ where: { id } });
     if (!existing) {
       res.status(404).json({ error: 'Restaurant not found' });
       return;
     }
 
-    // Благодаря onDelete: Cascade в схеме Prisma связанные сущности удалятся автоматически
-    await prisma.restaurant.delete({
+    // Связанные сущности удалятся автоматически благодаря CASCADE в схеме БД
+    await dbClient.restaurant.delete({
       where: { id },
     });
 
@@ -274,38 +233,31 @@ export const getRestaurantEmployees = async (req: AuthRequest, res: Response, ne
 
     const { restaurantId } = req.params;
 
-    const employees = await prisma.restaurantUser.findMany({
+    const employees = await dbClient.restaurantUser.findMany({
       where: {
         restaurantId,
-        isActive: true,
+        // Показываем всех сотрудников, не только активных (для графика)
       },
       include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            phone: true,
-          },
-        },
-        position: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        department: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        user: true,
+        position: true,
+        department: true,
       },
-      orderBy: [
-        { position: { name: 'asc' } },
-        { department: { name: 'asc' } },
-        { user: { lastName: 'asc' } },
-      ],
+    });
+
+    // Сортируем после получения данных, так как вложенный orderBy не поддерживается
+    employees.sort((a, b) => {
+      const posA = a.position?.name || '';
+      const posB = b.position?.name || '';
+      if (posA !== posB) return posA.localeCompare(posB);
+      
+      const deptA = a.department?.name || '';
+      const deptB = b.department?.name || '';
+      if (deptA !== deptB) return deptA.localeCompare(deptB);
+      
+      const lastNameA = a.user?.lastName || '';
+      const lastNameB = b.user?.lastName || '';
+      return lastNameA.localeCompare(lastNameB);
     });
 
     // Группируем по отделам, затем по должностям
@@ -368,26 +320,16 @@ export const getRestaurantUsersForManager = async (req: AuthRequest, res: Respon
     const { restaurantId } = req.params;
 
     // Получаем всех сотрудников ресторана
-    const restaurantUsers = await prisma.restaurantUser.findMany({
+    const restaurantUsers = await dbClient.restaurantUser.findMany({
       where: {
         restaurantId,
         isActive: true,
       },
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            phone: true,
-            role: true,
-          },
-        },
-      },
+      include: { user: true },
     });
 
     // Также добавляем существующих менеджеров и админов
-    const managers = await prisma.user.findMany({
+    const managers = await dbClient.user.findMany({
       where: {
         isActive: true,
         role: {

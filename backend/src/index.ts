@@ -1,9 +1,27 @@
-import express from 'express';
-import cors from 'cors';
+// Загружаем переменные окружения ПЕРВЫМ делом, до всех импортов
 import dotenv from 'dotenv';
 import path from 'path';
 
-dotenv.config();
+// Загружаем .env файл (пробуем несколько возможных путей)
+const envPaths = [
+  path.join(process.cwd(), '.env'),           // Из корня проекта
+  path.join(__dirname, '../.env'),           // Относительно dist/
+  path.join(__dirname, '../../.env'),         // Относительно src/
+];
+
+for (const envPath of envPaths) {
+  const result = dotenv.config({ path: envPath });
+  if (!result.error) {
+    break; // Успешно загрузили
+  }
+}
+
+import express from 'express';
+import cors from 'cors';
+
+// Инициализация БД
+import { initDatabase } from './utils/initDb';
+initDatabase();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -54,7 +72,10 @@ app.use('/api/shift-templates', shiftTemplateRoutes);
 app.use('/api/schedule-templates', scheduleTemplateRoutes);
 app.use('/api/restaurants', restaurantRoutes);
 app.use('/api/tasks', taskRoutes);
-app.use('/api/timesheets', timesheetRoutes);
+app.use('/api/timesheets', (req, res, next) => {
+  console.log('Timesheets route accessed:', req.method, req.path, req.url);
+  next();
+}, timesheetRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/action-logs', actionLogRoutes);
 app.use('/api/analytics', analyticsRoutes);
@@ -72,7 +93,11 @@ app.use('/api/push-subscriptions', pushSubscriptionRoutes);
 app.use('/api/notification-settings', notificationSettingsRoutes);
 
 // Endpoint для получения VAPID публичного ключа
-import { getVapidPublicKey } from './utils/pushNotifications';
+import { getVapidPublicKey, initializeVapid } from './utils/pushNotifications';
+
+// Инициализируем VAPID ключи после загрузки .env
+initializeVapid();
+
 app.get('/api/vapid-public-key', (req, res) => {
   const key = getVapidPublicKey();
   if (key) {

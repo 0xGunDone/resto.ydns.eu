@@ -19,6 +19,28 @@ router.post(
   timesheetController.calculateTimesheet
 );
 
+// ВАЖНО: Специфичные маршруты должны быть ПЕРЕД общими маршрутами
+// Получение табеля с расчетом заработка по типам смен
+router.get(
+  '/earnings',
+  (req, res, next) => {
+    console.log('Earnings route hit:', req.method, req.path, req.query, req.url);
+    next();
+  },
+  timesheetController.getTimesheetWithEarnings
+);
+
+// Получение сводки табелей по всем сотрудникам
+router.get(
+  '/summary',
+  [
+    query('restaurantId').notEmpty().withMessage('restaurantId is required'),
+    query('month').toInt().isInt({ min: 1, max: 12 }).withMessage('month must be between 1 and 12'),
+    query('year').toInt().isInt({ min: 2020, max: 2100 }).withMessage('year must be between 2020 and 2100'),
+  ],
+  timesheetController.getTimesheetSummary
+);
+
 // Получение табелей
 router.get(
   '/',
@@ -29,29 +51,6 @@ router.get(
     query('year').optional().isInt({ min: 2020, max: 2100 }),
   ],
   timesheetController.getTimesheets
-);
-
-// Получение сводки табелей по всем сотрудникам
-router.get(
-  '/summary',
-  [
-    query('restaurantId').notEmpty(),
-    query('month').isInt({ min: 1, max: 12 }),
-    query('year').isInt({ min: 2020, max: 2100 }),
-  ],
-  timesheetController.getTimesheetSummary
-);
-
-// Получение табеля с расчетом заработка по типам смен
-router.get(
-  '/earnings',
-  [
-    query('restaurantId').notEmpty(),
-    query('userId').notEmpty(),
-    query('month').isInt({ min: 1, max: 12 }),
-    query('year').isInt({ min: 2020, max: 2100 }),
-  ],
-  timesheetController.getTimesheetWithEarnings
 );
 
 // Обновление табеля

@@ -562,6 +562,7 @@ function EmployeesTab({ restaurantId }: { restaurantId: string }) {
             loadEmployees();
             setShowCreateModal(false);
           }}
+          loadEmployees={loadEmployees}
         />
       )}
 
@@ -571,9 +572,9 @@ function EmployeesTab({ restaurantId }: { restaurantId: string }) {
           employee={editingEmp}
           onClose={() => setEditingEmp(null)}
           onSuccess={() => {
-            loadEmployees();
             setEditingEmp(null);
           }}
+          loadEmployees={loadEmployees}
         />
       )}
 
@@ -740,11 +741,13 @@ function EmployeeModal({
   employee,
   onClose,
   onSuccess,
+  loadEmployees, // Добавляем пропс для перезагрузки списка
 }: {
   restaurantId: string;
   employee?: any;
   onClose: () => void;
   onSuccess: () => void;
+  loadEmployees: () => void; // Добавляем тип
 }) {
   const { user } = useAuthStore();
   const isOwner = user?.role === 'OWNER';
@@ -849,6 +852,7 @@ function EmployeeModal({
         }
       }
       onSuccess();
+      loadEmployees(); // Добавляем перезагрузку списка после сохранения
     } catch (error: any) {
       console.error('Ошибка сохранения сотрудника:', error);
       let errorMessage = 'Ошибка сохранения';

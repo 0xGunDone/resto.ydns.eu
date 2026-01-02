@@ -40,5 +40,5 @@
 
 - Backend API: http://localhost:3001/api
 - Frontend: http://localhost:5173
-- Prisma Studio: `cd backend && npm run db:studio`
+- Database: SQLite файл находится в `backend/dev.db`
 
