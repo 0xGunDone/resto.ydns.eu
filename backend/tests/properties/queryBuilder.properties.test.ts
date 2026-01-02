@@ -1,5 +1,5 @@
 /**
- * Property-Based Tests for Query Builder
+ * Property-Based Tests for Query Builder (PostgreSQL)
  * **Feature: project-refactoring, Property 13: OR Condition Query Correctness**
  * **Validates: Requirements 6.1**
  */
@@ -13,7 +13,7 @@ import {
   WhereClause,
 } from '../../src/database/queryBuilder';
 
-describe('Query Builder Properties', () => {
+describe('Query Builder Properties (PostgreSQL)', () => {
   /**
    * **Feature: project-refactoring, Property 13: OR Condition Query Correctness**
    * 
@@ -24,10 +24,7 @@ describe('Query Builder Properties', () => {
    * and combined with OR operator.
    */
   it('should correctly build OR conditions with proper parentheses', () => {
-    // Arbitrary for simple field names
     const fieldNameArb = fc.stringMatching(/^[a-z][a-zA-Z0-9]{0,10}$/);
-    
-    // Arbitrary for simple values
     const simpleValueArb = fc.oneof(
       fc.string({ minLength: 1, maxLength: 10 }),
       fc.integer({ min: 0, max: 1000 })
@@ -40,7 +37,6 @@ describe('Query Builder Properties', () => {
         fieldNameArb,
         simpleValueArb,
         (field1, value1, field2, value2) => {
-          // Build a query with OR conditions
           const where: WhereClause = {
             OR: [
               { [field1]: value1 },
@@ -60,6 +56,9 @@ describe('Query Builder Properties', () => {
           expect(params).toHaveLength(2);
           expect(params).toContain(value1);
           expect(params).toContain(value2);
+          
+          // Should use PostgreSQL placeholders ($1, $2, etc.)
+          expect(sql).toMatch(/\$\d+/);
 
           return true;
         }
@@ -84,7 +83,6 @@ describe('Query Builder Properties', () => {
         fieldNameArb,
         simpleValueArb,
         (field1, value1, field2, value2, field3, value3) => {
-          // Build: field3 = value3 AND (field1 = value1 OR field2 = value2)
           const where: WhereClause = {
             [field3]: value3,
             OR: [
@@ -119,7 +117,6 @@ describe('Query Builder Properties', () => {
    * Property: Empty OR array should not affect query
    */
   it('should handle empty OR array gracefully', () => {
-    // Use field names that don't contain "OR" to avoid false positives in the check
     const fieldNameArb = fc.stringMatching(/^[a-z][a-ce-np-z0-9]{0,10}$/).filter(
       s => !s.toUpperCase().includes('OR')
     );
@@ -134,13 +131,12 @@ describe('Query Builder Properties', () => {
 
         const { sql, params } = buildWhereClause(where);
 
-        // Should still have the regular condition
-        expect(sql).toContain(`${field} = ?`);
+        // Should still have the regular condition with PostgreSQL placeholder
+        expect(sql).toMatch(new RegExp(`"${field}" = \\$\\d+`));
         expect(params).toHaveLength(1);
         expect(params[0]).toBe(value);
         
         // Should NOT contain OR keyword since array is empty
-        // Check for ' OR ' with spaces to avoid matching field names containing 'or'
         expect(sql).not.toMatch(/\sOR\s/);
 
         return true;
@@ -164,8 +160,8 @@ describe('Query Builder Properties', () => {
 
         const { sql, params } = buildWhereClause(where);
 
-        // Should have the condition
-        expect(sql).toContain(`${field} = ?`);
+        // Should have the condition with PostgreSQL placeholder
+        expect(sql).toMatch(new RegExp(`"${field}" = \\$\\d+`));
         expect(params).toHaveLength(1);
         expect(params[0]).toBe(value);
 
@@ -222,7 +218,7 @@ describe('Query Builder Properties', () => {
         const where: WhereClause = { [field]: null };
         const { sql, params } = buildWhereClause(where);
 
-        expect(sql).toContain(`${field} IS NULL`);
+        expect(sql).toContain(`"${field}" IS NULL`);
         expect(params).toHaveLength(0);
 
         return true;
@@ -244,10 +240,10 @@ describe('Query Builder Properties', () => {
         const { sql, params } = buildWhereClause(where);
 
         // Should have IN clause
-        expect(sql).toContain(`${field} IN (`);
+        expect(sql).toContain(`"${field}" IN (`);
         
-        // Should have correct number of placeholders
-        const placeholders = sql.match(/\?/g) || [];
+        // Should have correct number of PostgreSQL placeholders ($1, $2, etc.)
+        const placeholders = sql.match(/\$\d+/g) || [];
         expect(placeholders).toHaveLength(values.length);
         
         // Params should match values
@@ -271,7 +267,7 @@ describe('Query Builder Properties', () => {
         const { sql, params } = buildWhereClause(where);
 
         // Should have always-false condition
-        expect(sql).toContain('1 = 0');
+        expect(sql).toContain('FALSE');
         expect(params).toHaveLength(0);
 
         return true;
@@ -300,7 +296,8 @@ describe('Query Builder Properties', () => {
         const where: WhereClause = { [field]: { [op]: value } };
         const { sql, params } = buildWhereClause(where);
 
-        expect(sql).toContain(`${field} ${operatorMap[op]} ?`);
+        // Should have correct operator with PostgreSQL placeholder
+        expect(sql).toMatch(new RegExp(`"${field}" ${operatorMap[op].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\$\\d+`));
         expect(params).toHaveLength(1);
         expect(params[0]).toBe(value);
 
@@ -311,9 +308,9 @@ describe('Query Builder Properties', () => {
   });
 
   /**
-   * Property: LIKE operators should generate correct patterns
+   * Property: LIKE operators should generate correct patterns (ILIKE for PostgreSQL)
    */
-  it('should generate correct LIKE patterns', () => {
+  it('should generate correct ILIKE patterns for PostgreSQL', () => {
     const fieldNameArb = fc.stringMatching(/^[a-z][a-zA-Z0-9]{0,10}$/);
     const searchArb = fc.string({ minLength: 1, maxLength: 10 });
 
@@ -322,23 +319,112 @@ describe('Query Builder Properties', () => {
         // Test contains
         const containsWhere: WhereClause = { [field]: { contains: search } };
         const containsResult = buildWhereClause(containsWhere);
-        expect(containsResult.sql).toContain(`${field} LIKE ?`);
+        expect(containsResult.sql).toMatch(new RegExp(`"${field}" ILIKE \\$\\d+`));
         expect(containsResult.params[0]).toBe(`%${search}%`);
 
         // Test startsWith
         const startsWithWhere: WhereClause = { [field]: { startsWith: search } };
         const startsWithResult = buildWhereClause(startsWithWhere);
-        expect(startsWithResult.sql).toContain(`${field} LIKE ?`);
+        expect(startsWithResult.sql).toMatch(new RegExp(`"${field}" ILIKE \\$\\d+`));
         expect(startsWithResult.params[0]).toBe(`${search}%`);
 
         // Test endsWith
         const endsWithWhere: WhereClause = { [field]: { endsWith: search } };
         const endsWithResult = buildWhereClause(endsWithWhere);
-        expect(endsWithResult.sql).toContain(`${field} LIKE ?`);
+        expect(endsWithResult.sql).toMatch(new RegExp(`"${field}" ILIKE \\$\\d+`));
         expect(endsWithResult.params[0]).toBe(`%${search}`);
 
         return true;
       }),
+      { numRuns: 100 }
+    );
+  });
+
+  /**
+   * Property: buildSelectQuery should generate valid PostgreSQL SELECT statements
+   */
+  it('should generate valid PostgreSQL SELECT statements', () => {
+    const tableNameArb = fc.stringMatching(/^[a-z][a-zA-Z0-9]{0,10}$/);
+    const fieldNameArb = fc.stringMatching(/^[a-z][a-zA-Z0-9]{0,10}$/);
+    const valueArb = fc.integer({ min: 0, max: 1000 });
+
+    fc.assert(
+      fc.property(tableNameArb, fieldNameArb, valueArb, (table, field, value) => {
+        const { sql, params } = buildSelectQuery({
+          table,
+          where: { [field]: value },
+        });
+
+        // Should start with SELECT
+        expect(sql).toMatch(/^SELECT/);
+        
+        // Should have FROM clause with quoted table name
+        expect(sql).toContain(`FROM "${table}"`);
+        
+        // Should have WHERE clause with PostgreSQL placeholder
+        expect(sql).toContain('WHERE');
+        expect(sql).toMatch(/\$\d+/);
+        
+        // Params should contain the value
+        expect(params).toContain(value);
+
+        return true;
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  /**
+   * Property: buildSetClause should generate valid PostgreSQL SET clauses
+   */
+  it('should generate valid PostgreSQL SET clauses', () => {
+    // Exclude 'id' since it's filtered out by default in buildSetClause
+    const fieldNameArb = fc.stringMatching(/^[a-z][a-zA-Z0-9]{0,10}$/).filter(s => s !== 'id');
+    const valueArb = fc.oneof(
+      fc.string({ minLength: 1, maxLength: 10 }),
+      fc.integer({ min: 0, max: 1000 })
+    );
+
+    fc.assert(
+      fc.property(fieldNameArb, valueArb, (field, value) => {
+        const { setClause, params } = buildSetClause({ [field]: value });
+
+        // Should have field = $N format
+        expect(setClause).toMatch(new RegExp(`"${field}" = \\$\\d+`));
+        
+        // Params should contain the value
+        expect(params).toContain(value);
+
+        return true;
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  /**
+   * Property: nextIndex should be correctly tracked
+   */
+  it('should correctly track nextIndex for parameter numbering', () => {
+    const fieldNameArb = fc.stringMatching(/^[a-z][a-zA-Z0-9]{0,10}$/);
+    const valueArb = fc.integer({ min: 0, max: 1000 });
+
+    fc.assert(
+      fc.property(
+        fc.array(fc.tuple(fieldNameArb, valueArb), { minLength: 1, maxLength: 5 }),
+        (conditions) => {
+          const where: WhereClause = {};
+          for (const [field, value] of conditions) {
+            where[field] = value;
+          }
+
+          const { params, nextIndex } = buildWhereClause(where);
+
+          // nextIndex should be params.length + 1 (since we start at 1)
+          expect(nextIndex).toBe(params.length + 1);
+
+          return true;
+        }
+      ),
       { numRuns: 100 }
     );
   });

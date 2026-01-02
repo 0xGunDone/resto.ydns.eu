@@ -4,15 +4,23 @@
  * Requirements: 3.1, 3.4
  */
 
-import Database from 'better-sqlite3';
-import path from 'path';
 import { TelegramSession, TelegramStep } from '../database/types';
-import { 
-  createTelegramSessionRepository, 
-  TelegramSessionRepository,
-  RegistrationData 
-} from '../database/repositories/telegramSessionRepository';
 import { logger } from './loggerService';
+import { pgPool, generateId } from '../utils/db';
+
+/**
+ * Registration data stored in session
+ */
+export interface RegistrationData {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  password?: string;
+  restaurantId?: string;
+  positionId?: string;
+  departmentId?: string;
+}
 
 /**
  * Session data for service operations
@@ -55,205 +63,219 @@ export interface ITelegramSessionService {
 }
 
 /**
- * Parse session to convert registrationData from JSON string to object
+ * Parse session to convert registrationData from JSON to object
  */
-function parseSession(session: TelegramSession): ParsedTelegramSession {
+function parseSession(session: any): ParsedTelegramSession {
   let registrationData: RegistrationData | null = null;
   
-  if (session.registrationData) {
-    try {
-      registrationData = JSON.parse(session.registrationData);
-    } catch (e) {
-      logger.warn('Failed to parse registration data', { 
-        telegramUserId: session.telegramUserId,
-        error: e instanceof Error ? e.message : 'Unknown error'
-      });
+  if (session.registration_data) {
+    if (typeof session.registration_data === 'string') {
+      try {
+        registrationData = JSON.parse(session.registration_data);
+      } catch (e) {
+        logger.warn('Failed to parse registration data', { 
+          telegramUserId: session.telegram_user_id,
+          error: e instanceof Error ? e.message : 'Unknown error'
+        });
+      }
+    } else {
+      registrationData = session.registration_data;
     }
   }
 
   return {
-    ...session,
+    id: session.id,
+    telegramUserId: session.telegram_user_id,
+    step: session.step as TelegramStep,
+    inviteToken: session.invite_token,
     registrationData,
+    createdAt: session.created_at,
+    updatedAt: session.updated_at,
+    expiresAt: session.expires_at,
   };
 }
 
+let cleanupInterval: NodeJS.Timeout | null = null;
+
 /**
- * Create Telegram Session Service
+ * Telegram Session Service implementation
  */
-export function createTelegramSessionService(db: Database.Database): ITelegramSessionService {
-  const repository = createTelegramSessionRepository(db);
-  let cleanupInterval: NodeJS.Timeout | null = null;
+export const telegramSessionService: ITelegramSessionService = {
+  async getSession(telegramUserId: string): Promise<ParsedTelegramSession | null> {
+    logger.debug('Getting session', { telegramUserId });
+    
+    const result = await pgPool.query(
+      'SELECT * FROM "TelegramSession" WHERE "telegram_user_id" = $1',
+      [telegramUserId]
+    );
+    
+    if (result.rows.length === 0) {
+      logger.debug('Session not found', { telegramUserId });
+      return null;
+    }
 
-  return {
-    /**
-     * Get session by Telegram user ID
-     */
-    async getSession(telegramUserId: string): Promise<ParsedTelegramSession | null> {
-      logger.debug('Getting session', { telegramUserId });
-      
-      const session = repository.findByTelegramUserId(telegramUserId);
-      
-      if (!session) {
-        logger.debug('Session not found', { telegramUserId });
-        return null;
-      }
+    const session = result.rows[0];
 
-      // Check if expired
-      if (new Date(session.expiresAt) < new Date()) {
-        logger.debug('Session expired, deleting', { telegramUserId });
-        repository.deleteByTelegramUserId(telegramUserId);
-        return null;
-      }
+    // Check if expired
+    if (new Date(session.expires_at) < new Date()) {
+      logger.debug('Session expired, deleting', { telegramUserId });
+      await pgPool.query('DELETE FROM "TelegramSession" WHERE "telegram_user_id" = $1', [telegramUserId]);
+      return null;
+    }
 
-      return parseSession(session);
-    },
+    return parseSession(session);
+  },
 
-    /**
-     * Create a new session
-     */
-    async createSession(telegramUserId: string, data?: SessionData): Promise<ParsedTelegramSession> {
-      logger.info('Creating session', { telegramUserId });
+  async createSession(telegramUserId: string, data?: SessionData): Promise<ParsedTelegramSession> {
+    logger.info('Creating session', { telegramUserId });
 
-      // Delete existing session if any
-      repository.deleteByTelegramUserId(telegramUserId);
+    // Delete existing session if any
+    await pgPool.query('DELETE FROM "TelegramSession" WHERE "telegram_user_id" = $1', [telegramUserId]);
 
-      const session = repository.create({
-        telegramUserId,
-        step: data?.step || 'idle',
-        inviteToken: data?.inviteToken || null,
-        registrationData: data?.registrationData || null,
-      });
+    const id = generateId();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + DEFAULT_SESSION_EXPIRY_MS);
 
-      logger.debug('Session created', { telegramUserId, sessionId: session.id });
-      return parseSession(session);
-    },
+    const result = await pgPool.query(`
+      INSERT INTO "TelegramSession" ("id", "telegram_user_id", "step", "invite_token", "registration_data", "created_at", "updated_at", "expires_at")
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *
+    `, [
+      id,
+      telegramUserId,
+      data?.step || 'idle',
+      data?.inviteToken || null,
+      data?.registrationData ? JSON.stringify(data.registrationData) : null,
+      now.toISOString(),
+      now.toISOString(),
+      expiresAt.toISOString(),
+    ]);
 
-    /**
-     * Update session by Telegram user ID
-     */
-    async updateSession(telegramUserId: string, data: SessionData): Promise<ParsedTelegramSession | null> {
-      logger.debug('Updating session', { telegramUserId, data });
+    logger.debug('Session created', { telegramUserId, sessionId: id });
+    return parseSession(result.rows[0]);
+  },
 
-      const updated = repository.updateByTelegramUserId(telegramUserId, {
-        step: data.step,
-        inviteToken: data.inviteToken,
-        registrationData: data.registrationData,
-      });
+  async updateSession(telegramUserId: string, data: SessionData): Promise<ParsedTelegramSession | null> {
+    logger.debug('Updating session', { telegramUserId, data });
 
-      if (!updated) {
-        logger.warn('Session not found for update', { telegramUserId });
-        return null;
-      }
+    const setClauses: string[] = ['"updated_at" = NOW()'];
+    const params: any[] = [];
+    let paramIndex = 1;
 
-      return parseSession(updated);
-    },
+    if (data.step !== undefined) {
+      setClauses.push(`"step" = $${paramIndex}`);
+      params.push(data.step);
+      paramIndex++;
+    }
 
-    /**
-     * Delete session by Telegram user ID
-     */
-    async deleteSession(telegramUserId: string): Promise<void> {
-      logger.info('Deleting session', { telegramUserId });
-      repository.deleteByTelegramUserId(telegramUserId);
-    },
+    if (data.inviteToken !== undefined) {
+      setClauses.push(`"invite_token" = $${paramIndex}`);
+      params.push(data.inviteToken);
+      paramIndex++;
+    }
 
-    /**
-     * Clean expired sessions
-     * Returns the number of deleted sessions
-     */
-    async cleanExpiredSessions(): Promise<number> {
-      logger.debug('Cleaning expired sessions');
-      const count = repository.cleanExpiredSessions();
-      
-      if (count > 0) {
-        logger.info('Cleaned expired sessions', { count });
-      }
-      
-      return count;
-    },
+    if (data.registrationData !== undefined) {
+      setClauses.push(`"registration_data" = $${paramIndex}`);
+      params.push(data.registrationData ? JSON.stringify(data.registrationData) : null);
+      paramIndex++;
+    }
 
-    /**
-     * Get or create session for a Telegram user
-     */
-    async getOrCreateSession(telegramUserId: string): Promise<ParsedTelegramSession> {
-      const existing = await this.getSession(telegramUserId);
-      
-      if (existing) {
-        // Extend expiration
-        const extended = repository.extendExpiration(telegramUserId);
-        if (extended) {
-          return parseSession(extended);
-        }
-      }
+    params.push(telegramUserId);
 
-      return this.createSession(telegramUserId);
-    },
+    const result = await pgPool.query(`
+      UPDATE "TelegramSession" 
+      SET ${setClauses.join(', ')}
+      WHERE "telegram_user_id" = $${paramIndex}
+      RETURNING *
+    `, params);
 
-    /**
-     * Start automatic cleanup scheduler
-     */
-    startCleanupScheduler(): void {
-      if (cleanupInterval) {
-        logger.warn('Cleanup scheduler already running');
-        return;
-      }
+    if (result.rows.length === 0) {
+      logger.warn('Session not found for update', { telegramUserId });
+      return null;
+    }
 
-      logger.info('Starting session cleanup scheduler', { 
-        intervalMs: CLEANUP_INTERVAL_MS 
-      });
+    return parseSession(result.rows[0]);
+  },
 
-      // Run cleanup immediately
+  async deleteSession(telegramUserId: string): Promise<void> {
+    logger.info('Deleting session', { telegramUserId });
+    await pgPool.query('DELETE FROM "TelegramSession" WHERE "telegram_user_id" = $1', [telegramUserId]);
+  },
+
+  async cleanExpiredSessions(): Promise<number> {
+    logger.debug('Cleaning expired sessions');
+    const result = await pgPool.query('DELETE FROM "TelegramSession" WHERE "expires_at" < NOW()');
+    const count = result.rowCount || 0;
+    
+    if (count > 0) {
+      logger.info('Cleaned expired sessions', { count });
+    }
+    
+    return count;
+  },
+
+  async getOrCreateSession(telegramUserId: string): Promise<ParsedTelegramSession> {
+    const existing = await this.getSession(telegramUserId);
+    
+    if (existing) {
+      // Extend expiration
+      const expiresAt = new Date(Date.now() + DEFAULT_SESSION_EXPIRY_MS);
+      await pgPool.query(
+        'UPDATE "TelegramSession" SET "expires_at" = $1, "updated_at" = NOW() WHERE "telegram_user_id" = $2',
+        [expiresAt.toISOString(), telegramUserId]
+      );
+      return { ...existing, expiresAt: expiresAt.toISOString() };
+    }
+
+    return this.createSession(telegramUserId);
+  },
+
+  startCleanupScheduler(): void {
+    if (cleanupInterval) {
+      logger.warn('Cleanup scheduler already running');
+      return;
+    }
+
+    logger.info('Starting session cleanup scheduler', { intervalMs: CLEANUP_INTERVAL_MS });
+
+    // Run cleanup immediately
+    this.cleanExpiredSessions();
+
+    // Schedule periodic cleanup
+    cleanupInterval = setInterval(() => {
       this.cleanExpiredSessions();
+    }, CLEANUP_INTERVAL_MS);
+  },
 
-      // Schedule periodic cleanup
-      cleanupInterval = setInterval(() => {
-        this.cleanExpiredSessions();
-      }, CLEANUP_INTERVAL_MS);
-    },
-
-    /**
-     * Stop automatic cleanup scheduler
-     */
-    stopCleanupScheduler(): void {
-      if (cleanupInterval) {
-        clearInterval(cleanupInterval);
-        cleanupInterval = null;
-        logger.info('Stopped session cleanup scheduler');
-      }
-    },
-  };
-}
-
-// Singleton instance (lazy initialization)
-let serviceInstance: ITelegramSessionService | null = null;
+  stopCleanupScheduler(): void {
+    if (cleanupInterval) {
+      clearInterval(cleanupInterval);
+      cleanupInterval = null;
+      logger.info('Stopped session cleanup scheduler');
+    }
+  },
+};
 
 /**
- * Get the singleton Telegram Session Service instance
+ * Get the Telegram Session Service instance
  */
 export function getTelegramSessionService(): ITelegramSessionService {
-  if (!serviceInstance) {
-    // Initialize database connection
-    const dbPath = process.env.DATABASE_URL
-      ? process.env.DATABASE_URL.replace(/^file:/, '')
-      : path.join(__dirname, '../../dev.db');
-    
-    const db = new Database(dbPath);
-    db.pragma('foreign_keys = ON');
-    
-    serviceInstance = createTelegramSessionService(db);
-  }
-  
-  return serviceInstance;
+  return telegramSessionService;
 }
 
 /**
- * Reset the singleton instance (for testing)
+ * Create Telegram Session Service (for backward compatibility)
+ */
+export function createTelegramSessionService(_db?: any): ITelegramSessionService {
+  return telegramSessionService;
+}
+
+/**
+ * Reset the service (for testing)
  */
 export function resetTelegramSessionService(): void {
-  if (serviceInstance) {
-    serviceInstance.stopCleanupScheduler();
-    serviceInstance = null;
-  }
+  telegramSessionService.stopCleanupScheduler();
 }
 
 // Re-export types
-export { RegistrationData, TelegramSession, TelegramStep };
+export { TelegramSession, TelegramStep };

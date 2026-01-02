@@ -12,6 +12,9 @@
 - [Использование прав в коде](permissions-usage.md) - API endpoints, примеры использования в контроллерах
 - [План реализации](permissions-implementation-plan.md) - Статус реализации всех этапов
 
+### Обмен сменами
+- [Руководство по обмену сменами](shift-swap-guide.md) - Процесс обмена, статусы, API, уведомления
+
 ### Telegram бот
 - [Быстрый старт](telegram-bot-quick-start.md) - Настройка, запуск и тестирование бота
 - [Итоги реализации](telegram-bot-summary.md) - Что реализовано, как работает регистрация
@@ -40,5 +43,5 @@
 
 - Backend API: http://localhost:3001/api
 - Frontend: http://localhost:5173
-- Database: SQLite файл находится в `backend/dev.db`
+- Database: PostgreSQL `resto`
 

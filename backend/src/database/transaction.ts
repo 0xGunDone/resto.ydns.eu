@@ -1,10 +1,11 @@
 /**
- * Transaction Support Module
+ * Transaction Support Module (PostgreSQL)
  * Provides transaction support for database operations
  * Requirements: 6.3
  */
 
-import Database from 'better-sqlite3';
+import { PoolClient } from 'pg';
+import { pgPool } from '../utils/db';
 
 /**
  * Transaction result type
@@ -16,130 +17,108 @@ export interface TransactionResult<T> {
 }
 
 /**
- * Transaction callback type
+ * Transaction callback type (async for PostgreSQL)
  */
-export type TransactionCallback<T> = () => T;
+export type TransactionCallback<T> = (client: PoolClient) => Promise<T>;
 
 /**
- * Create a transaction wrapper for a database connection
+ * Execute a function within a transaction
+ * Automatically commits on success, rolls back on error
  * 
- * @param db - The database connection
- * @returns Transaction helper functions
+ * @param callback - Async function to execute within transaction
+ * @returns Transaction result with data or error
  */
-export function createTransactionHelper(db: Database.Database) {
-  /**
-   * Execute a function within a transaction
-   * Automatically commits on success, rolls back on error
-   * 
-   * @param callback - Function to execute within transaction
-   * @returns Transaction result with data or error
-   */
-  function transaction<T>(callback: TransactionCallback<T>): TransactionResult<T> {
-    const txn = db.transaction(callback);
-    
-    try {
-      const data = txn();
-      return { success: true, data };
-    } catch (error) {
-      // Transaction is automatically rolled back by better-sqlite3
-      return { 
-        success: false, 
-        error: error instanceof Error ? error : new Error(String(error))
-      };
+export async function transaction<T>(callback: TransactionCallback<T>): Promise<TransactionResult<T>> {
+  const client = await pgPool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    const data = await callback(client);
+    await client.query('COMMIT');
+    return { success: true, data };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return { 
+      success: false, 
+      error: error instanceof Error ? error : new Error(String(error))
+    };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Execute a function within a transaction, throwing on error
+ * 
+ * @param callback - Async function to execute within transaction
+ * @returns Result of the callback
+ * @throws Error if transaction fails
+ */
+export async function transactionOrThrow<T>(callback: TransactionCallback<T>): Promise<T> {
+  const result = await transaction(callback);
+  if (!result.success) {
+    throw result.error;
+  }
+  return result.data as T;
+}
+
+/**
+ * Execute multiple operations atomically
+ * All operations must succeed or all are rolled back
+ * 
+ * @param operations - Array of async operations to execute
+ * @returns Array of results from each operation
+ */
+export async function atomicOperations<T>(
+  operations: Array<(client: PoolClient) => Promise<T>>
+): Promise<TransactionResult<T[]>> {
+  return transaction(async (client) => {
+    const results: T[] = [];
+    for (const op of operations) {
+      results.push(await op(client));
     }
-  }
+    return results;
+  });
+}
 
-  /**
-   * Execute a function within a transaction, throwing on error
-   * 
-   * @param callback - Function to execute within transaction
-   * @returns Result of the callback
-   * @throws Error if transaction fails
-   */
-  function transactionOrThrow<T>(callback: TransactionCallback<T>): T {
-    const result = transaction(callback);
-    if (!result.success) {
-      throw result.error;
-    }
-    return result.data as T;
-  }
-
-  /**
-   * Execute multiple operations atomically
-   * All operations must succeed or all are rolled back
-   * 
-   * @param operations - Array of operations to execute
-   * @returns Array of results from each operation
-   */
-  function atomicOperations<T>(operations: Array<() => T>): TransactionResult<T[]> {
-    return transaction(() => {
-      const results: T[] = [];
-      for (const op of operations) {
-        results.push(op());
-      }
-      return results;
-    });
-  }
-
-  /**
-   * Begin a manual transaction (for advanced use cases)
-   * Returns control functions for commit/rollback
-   */
-  function beginTransaction(): {
-    commit: () => void;
-    rollback: () => void;
-    isActive: () => boolean;
-  } {
-    let active = true;
-    
-    db.exec('BEGIN TRANSACTION');
-    
+/**
+ * Execute with savepoint (nested transaction support)
+ * 
+ * @param client - The pool client within an existing transaction
+ * @param name - Savepoint name
+ * @param callback - Async function to execute
+ * @returns Transaction result
+ */
+export async function withSavepoint<T>(
+  client: PoolClient,
+  name: string,
+  callback: () => Promise<T>
+): Promise<TransactionResult<T>> {
+  const savepointName = `sp_${name}_${Date.now()}`;
+  
+  try {
+    await client.query(`SAVEPOINT ${savepointName}`);
+    const data = await callback();
+    await client.query(`RELEASE SAVEPOINT ${savepointName}`);
+    return { success: true, data };
+  } catch (error) {
+    await client.query(`ROLLBACK TO SAVEPOINT ${savepointName}`);
     return {
-      commit: () => {
-        if (active) {
-          db.exec('COMMIT');
-          active = false;
-        }
-      },
-      rollback: () => {
-        if (active) {
-          db.exec('ROLLBACK');
-          active = false;
-        }
-      },
-      isActive: () => active,
+      success: false,
+      error: error instanceof Error ? error : new Error(String(error))
     };
   }
+}
 
-  /**
-   * Execute with savepoint (nested transaction support)
-   * 
-   * @param name - Savepoint name
-   * @param callback - Function to execute
-   * @returns Transaction result
-   */
-  function withSavepoint<T>(name: string, callback: TransactionCallback<T>): TransactionResult<T> {
-    const savepointName = `sp_${name}_${Date.now()}`;
-    
-    try {
-      db.exec(`SAVEPOINT ${savepointName}`);
-      const data = callback();
-      db.exec(`RELEASE SAVEPOINT ${savepointName}`);
-      return { success: true, data };
-    } catch (error) {
-      db.exec(`ROLLBACK TO SAVEPOINT ${savepointName}`);
-      return {
-        success: false,
-        error: error instanceof Error ? error : new Error(String(error))
-      };
-    }
-  }
-
+/**
+ * Create a transaction helper bound to a specific pool client
+ * Useful for managing transactions within a service
+ */
+export function createTransactionHelper() {
   return {
     transaction,
     transactionOrThrow,
     atomicOperations,
-    beginTransaction,
     withSavepoint,
   };
 }

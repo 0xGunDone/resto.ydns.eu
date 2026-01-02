@@ -1,10 +1,8 @@
 /**
- * Query Builder Module
+ * Query Builder Module (PostgreSQL)
  * Handles building SQL WHERE clauses with proper typing
  * Requirements: 6.1
  */
-
-import { toSqliteValue } from './typeConverters';
 
 /**
  * Supported comparison operators
@@ -44,102 +42,158 @@ export interface WhereClause {
 export interface WhereClauseResult {
   sql: string;
   params: unknown[];
+  nextIndex: number;
 }
 
 /**
- * Build a single condition from a key-value pair
+ * Convert value for PostgreSQL storage
  */
-function buildCondition(key: string, value: WhereValue): { condition: string; params: unknown[] } {
+function toPostgresValue(value: unknown): unknown {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  
+  return value;
+}
+
+/**
+ * Build a single condition from a key-value pair (PostgreSQL version)
+ */
+function buildCondition(key: string, value: WhereValue, startIndex: number): { condition: string; params: unknown[]; nextIndex: number } {
   const params: unknown[] = [];
+  let paramIndex = startIndex;
   
   if (value === null) {
-    return { condition: `${key} IS NULL`, params: [] };
+    return { condition: `"${key}" IS NULL`, params: [], nextIndex: paramIndex };
   }
   
   if (value === undefined) {
-    return { condition: '', params: [] };
+    return { condition: '', params: [], nextIndex: paramIndex };
   }
   
   // Handle object operators
   if (typeof value === 'object' && !(value instanceof Date)) {
     const entries = Object.entries(value);
     if (entries.length === 0) {
-      return { condition: '', params: [] };
+      return { condition: '', params: [], nextIndex: paramIndex };
     }
     
     const [op, opValue] = entries[0];
     
     switch (op) {
       case 'contains':
-        return { condition: `${key} LIKE ?`, params: [`%${opValue}%`] };
+        return { 
+          condition: `"${key}" ILIKE $${paramIndex}`, 
+          params: [`%${opValue}%`],
+          nextIndex: paramIndex + 1
+        };
       
       case 'startsWith':
-        return { condition: `${key} LIKE ?`, params: [`${opValue}%`] };
+        return { 
+          condition: `"${key}" ILIKE $${paramIndex}`, 
+          params: [`${opValue}%`],
+          nextIndex: paramIndex + 1
+        };
       
       case 'endsWith':
-        return { condition: `${key} LIKE ?`, params: [`%${opValue}`] };
+        return { 
+          condition: `"${key}" ILIKE $${paramIndex}`, 
+          params: [`%${opValue}`],
+          nextIndex: paramIndex + 1
+        };
       
       case 'in': {
         const inValues = opValue as (string | number)[];
         if (!Array.isArray(inValues) || inValues.length === 0) {
-          // Empty array - return condition that's always false
-          return { condition: '1 = 0', params: [] };
+          return { condition: 'FALSE', params: [], nextIndex: paramIndex };
         }
-        const placeholders = inValues.map(() => '?').join(', ');
-        return { condition: `${key} IN (${placeholders})`, params: inValues };
+        const placeholders = inValues.map((_, i) => `$${paramIndex + i}`).join(', ');
+        return { 
+          condition: `"${key}" IN (${placeholders})`, 
+          params: inValues,
+          nextIndex: paramIndex + inValues.length
+        };
       }
       
       case 'gt':
-        return { condition: `${key} > ?`, params: [toSqliteValue(opValue)] };
+        return { 
+          condition: `"${key}" > $${paramIndex}`, 
+          params: [toPostgresValue(opValue)],
+          nextIndex: paramIndex + 1
+        };
       
       case 'gte':
-        return { condition: `${key} >= ?`, params: [toSqliteValue(opValue)] };
+        return { 
+          condition: `"${key}" >= $${paramIndex}`, 
+          params: [toPostgresValue(opValue)],
+          nextIndex: paramIndex + 1
+        };
       
       case 'lt':
-        return { condition: `${key} < ?`, params: [toSqliteValue(opValue)] };
+        return { 
+          condition: `"${key}" < $${paramIndex}`, 
+          params: [toPostgresValue(opValue)],
+          nextIndex: paramIndex + 1
+        };
       
       case 'lte':
-        return { condition: `${key} <= ?`, params: [toSqliteValue(opValue)] };
+        return { 
+          condition: `"${key}" <= $${paramIndex}`, 
+          params: [toPostgresValue(opValue)],
+          nextIndex: paramIndex + 1
+        };
       
       default:
-        // Unknown operator, treat as equality
-        return { condition: `${key} = ?`, params: [toSqliteValue(value)] };
+        return { 
+          condition: `"${key}" = $${paramIndex}`, 
+          params: [toPostgresValue(value)],
+          nextIndex: paramIndex + 1
+        };
     }
   }
   
   // Simple equality
-  return { condition: `${key} = ?`, params: [toSqliteValue(value)] };
+  return { 
+    condition: `"${key}" = $${paramIndex}`, 
+    params: [toPostgresValue(value)],
+    nextIndex: paramIndex + 1
+  };
 }
 
 /**
- * Build WHERE clause from a where object
- * Properly handles OR conditions by wrapping them in parentheses
+ * Build WHERE clause from a where object (PostgreSQL version)
+ * Uses $1, $2, etc. placeholders instead of ?
  * 
  * @param where - Where clause object
- * @returns SQL string and parameters
+ * @param startIndex - Starting parameter index (default 1)
+ * @returns SQL string, parameters, and next available index
  */
-export function buildWhereClause(where: WhereClause): WhereClauseResult {
+export function buildWhereClause(where: WhereClause, startIndex: number = 1): WhereClauseResult {
   const conditions: string[] = [];
   const params: unknown[] = [];
+  let paramIndex = startIndex;
   
   // Process OR conditions first
   if (where.OR && Array.isArray(where.OR) && where.OR.length > 0) {
     const orConditions: string[] = [];
     
     for (const orClause of where.OR) {
-      const { sql: orSql, params: orParams } = buildWhereClause(orClause);
+      const { sql: orSql, params: orParams, nextIndex } = buildWhereClause(orClause, paramIndex);
       if (orSql) {
-        // Remove 'WHERE ' prefix if present
         const cleanSql = orSql.replace(/^WHERE\s+/i, '');
         if (cleanSql) {
           orConditions.push(`(${cleanSql})`);
           params.push(...orParams);
+          paramIndex = nextIndex;
         }
       }
     }
     
     if (orConditions.length > 0) {
-      // Wrap all OR conditions in parentheses to ensure correct precedence
       conditions.push(`(${orConditions.join(' OR ')})`);
     }
   }
@@ -149,12 +203,13 @@ export function buildWhereClause(where: WhereClause): WhereClauseResult {
     const andConditions: string[] = [];
     
     for (const andClause of where.AND) {
-      const { sql: andSql, params: andParams } = buildWhereClause(andClause);
+      const { sql: andSql, params: andParams, nextIndex } = buildWhereClause(andClause, paramIndex);
       if (andSql) {
         const cleanSql = andSql.replace(/^WHERE\s+/i, '');
         if (cleanSql) {
           andConditions.push(`(${cleanSql})`);
           params.push(...andParams);
+          paramIndex = nextIndex;
         }
       }
     }
@@ -166,7 +221,6 @@ export function buildWhereClause(where: WhereClause): WhereClauseResult {
   
   // Process regular conditions (implicit AND)
   for (const [key, value] of Object.entries(where)) {
-    // Skip OR and AND as they're already processed
     if (key === 'OR' || key === 'AND') {
       continue;
     }
@@ -175,20 +229,22 @@ export function buildWhereClause(where: WhereClause): WhereClauseResult {
       continue;
     }
     
-    const { condition, params: condParams } = buildCondition(key, value as WhereValue);
+    const { condition, params: condParams, nextIndex } = buildCondition(key, value as WhereValue, paramIndex);
     if (condition) {
       conditions.push(condition);
       params.push(...condParams);
+      paramIndex = nextIndex;
     }
   }
   
   if (conditions.length === 0) {
-    return { sql: '', params: [] };
+    return { sql: '', params: [], nextIndex: paramIndex };
   }
   
   return {
     sql: `WHERE ${conditions.join(' AND ')}`,
     params,
+    nextIndex: paramIndex,
   };
 }
 
@@ -214,26 +270,34 @@ export function buildOrderByClause(orderBy: OrderByClause | OrderByClause[] | un
     return '';
   }
   
-  const [key, direction] = entries[0];
-  return ` ORDER BY ${key} ${direction === 'desc' ? 'DESC' : 'ASC'}`;
+  const parts = entries.map(([key, direction]) => `"${key}" ${direction === 'desc' ? 'DESC' : 'ASC'}`);
+  return ` ORDER BY ${parts.join(', ')}`;
 }
 
 /**
- * Build LIMIT and OFFSET clause
+ * Build LIMIT and OFFSET clause (PostgreSQL version)
  */
-export function buildLimitOffsetClause(take?: number, skip?: number): string {
+export function buildLimitOffsetClause(take?: number, skip?: number, startIndex: number = 1): { sql: string; params: unknown[]; nextIndex: number } {
   let clause = '';
+  const params: unknown[] = [];
+  let paramIndex = startIndex;
+  
   if (take !== undefined) {
-    clause += ` LIMIT ${take}`;
+    clause += ` LIMIT $${paramIndex}`;
+    params.push(take);
+    paramIndex++;
   }
   if (skip !== undefined) {
-    clause += ` OFFSET ${skip}`;
+    clause += ` OFFSET $${paramIndex}`;
+    params.push(skip);
+    paramIndex++;
   }
-  return clause;
+  
+  return { sql: clause, params, nextIndex: paramIndex };
 }
 
 /**
- * Build a complete SELECT query
+ * Build a complete SELECT query (PostgreSQL version)
  */
 export interface SelectQueryOptions {
   table: string;
@@ -247,26 +311,30 @@ export interface SelectQueryOptions {
 export function buildSelectQuery(options: SelectQueryOptions): { sql: string; params: unknown[] } {
   const { table, where = {}, orderBy, take, skip, columns } = options;
   
-  const columnList = columns && columns.length > 0 ? columns.join(', ') : '*';
-  const { sql: whereSql, params } = buildWhereClause(where);
+  const columnList = columns && columns.length > 0 
+    ? columns.map(c => `"${c}"`).join(', ') 
+    : '*';
+  
+  const { sql: whereSql, params, nextIndex } = buildWhereClause(where);
   const orderBySql = buildOrderByClause(orderBy);
-  const limitOffsetSql = buildLimitOffsetClause(take, skip);
+  const { sql: limitOffsetSql, params: limitParams } = buildLimitOffsetClause(take, skip, nextIndex);
   
-  const sql = `SELECT ${columnList} FROM ${table}${whereSql ? ' ' + whereSql : ''}${orderBySql}${limitOffsetSql}`;
+  const sql = `SELECT ${columnList} FROM "${table}"${whereSql ? ' ' + whereSql : ''}${orderBySql}${limitOffsetSql}`;
   
-  return { sql, params };
+  return { sql, params: [...params, ...limitParams] };
 }
 
 /**
- * Build SET clause for UPDATE
+ * Build SET clause for UPDATE (PostgreSQL version)
  */
 export interface UpdateData {
   [key: string]: unknown;
 }
 
-export function buildSetClause(data: UpdateData, excludeFields: string[] = ['id']): { setClause: string; params: unknown[] } {
+export function buildSetClause(data: UpdateData, excludeFields: string[] = ['id'], startIndex: number = 1): { setClause: string; params: unknown[]; nextIndex: number } {
   const setParts: string[] = [];
   const params: unknown[] = [];
+  let paramIndex = startIndex;
   
   for (const [key, value] of Object.entries(data)) {
     if (excludeFields.includes(key) || value === undefined) {
@@ -274,19 +342,21 @@ export function buildSetClause(data: UpdateData, excludeFields: string[] = ['id'
     }
     
     if (value === null) {
-      setParts.push(`${key} = NULL`);
+      setParts.push(`"${key}" = NULL`);
     } else if (typeof value === 'object' && value !== null && 'increment' in value) {
-      // Handle increment operation
-      setParts.push(`${key} = ${key} + ?`);
+      setParts.push(`"${key}" = "${key}" + $${paramIndex}`);
       params.push((value as { increment: number }).increment);
+      paramIndex++;
     } else {
-      setParts.push(`${key} = ?`);
-      params.push(toSqliteValue(value));
+      setParts.push(`"${key}" = $${paramIndex}`);
+      params.push(toPostgresValue(value));
+      paramIndex++;
     }
   }
   
   return {
     setClause: setParts.join(', '),
     params,
+    nextIndex: paramIndex,
   };
 }

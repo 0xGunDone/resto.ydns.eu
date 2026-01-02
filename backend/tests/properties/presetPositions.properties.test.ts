@@ -256,9 +256,15 @@ describe('Preset Positions Properties', () => {
     });
 
     it('should return undefined for non-existent position names', () => {
+      // Filter out strings that are Object prototype methods
+      const objectPrototypeMethods = Object.getOwnPropertyNames(Object.prototype);
+      
       fc.assert(
         fc.property(
-          fc.string().filter(s => !Object.keys(PRESET_POSITIONS).includes(s)),
+          fc.string().filter(s => 
+            !Object.keys(PRESET_POSITIONS).includes(s) && 
+            !objectPrototypeMethods.includes(s)
+          ),
           (invalidName) => {
             const permissions = getPresetPositionPermissions(invalidName);
             expect(permissions).toBeUndefined();

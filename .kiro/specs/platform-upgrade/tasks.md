@@ -225,7 +225,7 @@
     - Отправлять напоминания
     - _Requirements: 13.3, 13.4_
 
-- [ ] 17. Checkpoint - Telegram уведомления
+- [x] 17. Checkpoint - Telegram уведомления
   - Запустить все тесты (npm test --prefix backend)
   - Протестировать все команды бота
   - Протестировать уведомления
@@ -234,43 +234,43 @@
 
 ### ЧАСТЬ 5: Поддержка PostgreSQL
 
-- [ ] 18. Абстракция базы данных
-  - [ ] 18.1 Создать DatabaseAdapter интерфейс
+- [x] 18. Абстракция базы данных
+  - [x] 18.1 Создать DatabaseAdapter интерфейс
     - query, queryOne, execute, transaction методы
     - _Requirements: 10.3_
 
-  - [ ] 18.2 Реализовать SQLiteAdapter
+  - [x] 18.2 Реализовать SQLiteAdapter
     - Обертка над текущим better-sqlite3
     - _Requirements: 10.2_
 
-  - [ ] 18.3 Реализовать PostgreSQLAdapter
+  - [x] 18.3 Реализовать PostgreSQLAdapter
     - Использовать pg библиотеку
     - Connection pooling
     - _Requirements: 10.1, 12.3_
 
-  - [ ] 18.4 Написать property test для совместимости
+  - [x] 18.4 Написать property test для совместимости
     - **Property 11: Database adapter compatibility**
     - **Validates: Requirements 10.2, 10.3**
 
-- [ ] 19. PostgreSQL схема
-  - [ ] 19.1 Создать SQL скрипт для PostgreSQL
+- [x] 19. PostgreSQL схема
+  - [x] 19.1 Создать SQL скрипт для PostgreSQL
     - Все таблицы с правильными типами
     - UUID вместо TEXT для id
     - TIMESTAMPTZ для дат
     - _Requirements: 11.1_
 
-  - [ ] 19.2 Создать скрипт миграции данных
+  - [x] 19.2 Создать скрипт миграции данных
     - Экспорт из SQLite
     - Импорт в PostgreSQL
     - Валидация целостности
     - _Requirements: 11.2, 11.3_
 
-- [ ] 20. Обновить dbClient
-  - [ ] 20.1 Рефакторинг для использования адаптера
+- [x] 20. Обновить dbClient
+  - [x] 20.1 Рефакторинг для использования адаптера
     - Заменить прямые вызовы SQLite на адаптер
     - _Requirements: 10.3_
 
-- [ ] 21. Checkpoint - PostgreSQL
+- [x] 21. Checkpoint - PostgreSQL
   - Запустить все тесты (npm test --prefix backend)
   - Протестировать с SQLite (dev)
   - Протестировать с PostgreSQL (если доступен)
@@ -279,28 +279,28 @@
 
 ### ЧАСТЬ 6: Финальная интеграция
 
-- [ ] 22. Интеграция компонентов
-  - [ ] 22.1 Связать обмен сменами с уведомлениями
+- [x] 22. Интеграция компонентов
+  - [x] 22.1 Связать обмен сменами с уведомлениями
     - Отправлять уведомления при создании/ответе/одобрении
     - _Requirements: 1.3, 2.4, 3.4_
 
-  - [ ] 22.2 Обновить навигацию
+  - [x] 22.2 Обновить навигацию
     - Добавить пункт "Обмен сменами"
     - Проверка прав для отображения
     - _Requirements: 6.4_
 
-- [ ] 23. Документация
-  - [ ] 23.1 Обновить README
+- [x] 23. Документация
+  - [x] 23.1 Обновить README
     - Описание новых функций
     - Настройка PostgreSQL
     - _Requirements: N/A_
 
-  - [ ] 23.2 Обновить docs/
+  - [x] 23.2 Обновить docs/
     - Обновить permissions-architecture.md
     - Добавить shift-swap-guide.md
     - _Requirements: N/A_
 
-- [ ] 24. Final Checkpoint
+- [x] 24. Final Checkpoint
   - Запустить все тесты (npm test --prefix backend)
   - Полный E2E тест обмена сменами
   - Проверка Telegram бота

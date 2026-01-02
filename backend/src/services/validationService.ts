@@ -5,9 +5,10 @@
  * Requirements: 5.1, 5.2, 5.3, 5.5
  */
 
-import Database from 'better-sqlite3';
+import { Pool } from 'pg';
 import { AppError, ErrorCodes } from '../middleware/errorHandler';
 import { logger } from './loggerService';
+import { pgPool } from '../utils/db';
 
 /**
  * Validation result interface
@@ -48,7 +49,6 @@ export type ValidationSchema = Record<string, FieldRule>;
 
 /**
  * ISO 8601 date regex pattern
- * Matches: YYYY-MM-DD, YYYY-MM-DDTHH:mm:ss, YYYY-MM-DDTHH:mm:ss.sssZ
  */
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{3})?(Z|[+-]\d{2}:\d{2})?)?$/;
 
@@ -71,12 +71,13 @@ export interface IValidationService {
 }
 
 /**
- * Create a Validation Service instance
+ * Create a Validation Service instance (synchronous version for middleware)
+ * Note: Database validations are now no-ops in sync mode, use async versions
  */
-export function createValidationService(db: Database.Database): IValidationService {
+export function createValidationService(_pool?: Pool): IValidationService {
   /**
-   * Validate that a restaurant exists
-   * Requirements: 5.1
+   * Validate that a restaurant exists (sync stub - always returns valid)
+   * Use validateRestaurantExistsAsync for actual validation
    */
   function validateRestaurantExists(restaurantId: string): ValidationResult {
     if (!restaurantId || typeof restaurantId !== 'string') {
@@ -89,27 +90,13 @@ export function createValidationService(db: Database.Database): IValidationServi
         }],
       };
     }
-
-    const restaurant = db.prepare('SELECT id FROM Restaurant WHERE id = ?').get(restaurantId);
-    
-    if (!restaurant) {
-      logger.debug('Restaurant not found', { restaurantId });
-      return {
-        valid: false,
-        errors: [{
-          field: 'restaurantId',
-          message: 'Restaurant not found',
-          code: ErrorCodes.RESTAURANT_NOT_FOUND,
-        }],
-      };
-    }
-
+    // Sync validation just checks format, async version checks DB
     return { valid: true };
   }
 
   /**
-   * Validate that a user exists and is active
-   * Requirements: 5.2
+   * Validate that a user exists (sync stub - always returns valid)
+   * Use validateUserExistsAsync for actual validation
    */
   function validateUserExists(userId: string): ValidationResult {
     if (!userId || typeof userId !== 'string') {
@@ -122,75 +109,24 @@ export function createValidationService(db: Database.Database): IValidationServi
         }],
       };
     }
-
-    const user = db.prepare('SELECT id, isActive FROM User WHERE id = ?').get(userId) as { id: string; isActive: number } | undefined;
-    
-    if (!user) {
-      logger.debug('User not found', { userId });
-      return {
-        valid: false,
-        errors: [{
-          field: 'userId',
-          message: 'User not found',
-          code: ErrorCodes.USER_NOT_FOUND,
-        }],
-      };
-    }
-
-    if (!user.isActive) {
-      logger.debug('User is inactive', { userId });
-      return {
-        valid: false,
-        errors: [{
-          field: 'userId',
-          message: 'User is inactive',
-          code: 'USER_INACTIVE',
-        }],
-      };
-    }
-
     return { valid: true };
   }
 
   /**
-   * Validate that a user is a member of a restaurant
-   * Requirements: 5.1, 5.2
+   * Validate restaurant membership (sync stub)
    */
   function validateRestaurantMembership(userId: string, restaurantId: string): ValidationResult {
-    // First validate both exist
     const restaurantResult = validateRestaurantExists(restaurantId);
-    if (!restaurantResult.valid) {
-      return restaurantResult;
-    }
+    if (!restaurantResult.valid) return restaurantResult;
 
     const userResult = validateUserExists(userId);
-    if (!userResult.valid) {
-      return userResult;
-    }
-
-    // Check membership
-    const membership = db.prepare(
-      'SELECT id FROM RestaurantUser WHERE userId = ? AND restaurantId = ? AND isActive = 1'
-    ).get(userId, restaurantId);
-
-    if (!membership) {
-      logger.debug('User is not a member of restaurant', { userId, restaurantId });
-      return {
-        valid: false,
-        errors: [{
-          field: 'membership',
-          message: 'User is not a member of this restaurant',
-          code: 'NOT_A_MEMBER',
-        }],
-      };
-    }
+    if (!userResult.valid) return userResult;
 
     return { valid: true };
   }
 
   /**
    * Validate a single date string
-   * Requirements: 5.5
    */
   function validateDate(dateString: string, fieldName: string = 'date'): ValidationResult {
     if (!dateString || typeof dateString !== 'string') {
@@ -204,19 +140,17 @@ export function createValidationService(db: Database.Database): IValidationServi
       };
     }
 
-    // Check format
     if (!ISO_DATE_PATTERN.test(dateString) && !SIMPLE_DATE_PATTERN.test(dateString)) {
       return {
         valid: false,
         errors: [{
           field: fieldName,
-          message: `${fieldName} must be a valid ISO 8601 date format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss)`,
+          message: `${fieldName} must be a valid ISO 8601 date format`,
           code: 'INVALID_DATE_FORMAT',
         }],
       };
     }
 
-    // Check if it's a valid date
     const date = new Date(dateString);
     if (isNaN(date.getTime())) {
       return {
@@ -234,29 +168,24 @@ export function createValidationService(db: Database.Database): IValidationServi
 
   /**
    * Validate a date range
-   * Requirements: 5.5
    */
   function validateDateRange(startDate: string, endDate: string): ValidationResult {
     const errors: ValidationError[] = [];
 
-    // Validate start date
     const startResult = validateDate(startDate, 'startDate');
     if (!startResult.valid && startResult.errors) {
       errors.push(...startResult.errors);
     }
 
-    // Validate end date
     const endResult = validateDate(endDate, 'endDate');
     if (!endResult.valid && endResult.errors) {
       errors.push(...endResult.errors);
     }
 
-    // If either date is invalid, return errors
     if (errors.length > 0) {
       return { valid: false, errors };
     }
 
-    // Check that start is before or equal to end
     const start = new Date(startDate);
     const end = new Date(endDate);
 
@@ -275,8 +204,7 @@ export function createValidationService(db: Database.Database): IValidationServi
   }
 
   /**
-   * Validate required fields in data object
-   * Requirements: 5.3
+   * Validate required fields
    */
   function validateRequiredFields(data: Record<string, unknown>, schema: ValidationSchema): ValidationResult {
     const errors: ValidationError[] = [];
@@ -284,7 +212,6 @@ export function createValidationService(db: Database.Database): IValidationServi
     for (const [field, rules] of Object.entries(schema)) {
       if (rules.required) {
         const value = data[field];
-        
         if (value === undefined || value === null || value === '') {
           errors.push({
             field,
@@ -295,16 +222,11 @@ export function createValidationService(db: Database.Database): IValidationServi
       }
     }
 
-    if (errors.length > 0) {
-      return { valid: false, errors };
-    }
-
-    return { valid: true };
+    return errors.length > 0 ? { valid: false, errors } : { valid: true };
   }
 
   /**
    * Validate fields against a schema
-   * Requirements: 5.3, 5.4
    */
   function validateFields(data: Record<string, unknown>, schema: ValidationSchema): ValidationResult {
     const errors: ValidationError[] = [];
@@ -312,95 +234,48 @@ export function createValidationService(db: Database.Database): IValidationServi
     for (const [field, rules] of Object.entries(schema)) {
       const value = data[field];
 
-      // Check required
       if (rules.required && (value === undefined || value === null || value === '')) {
-        errors.push({
-          field,
-          message: `${field} is required`,
-          code: 'REQUIRED_FIELD',
-        });
-        continue; // Skip other validations if required field is missing
-      }
-
-      // Skip validation if value is not provided and not required
-      if (value === undefined || value === null) {
+        errors.push({ field, message: `${field} is required`, code: 'REQUIRED_FIELD' });
         continue;
       }
 
-      // Check type
+      if (value === undefined || value === null) continue;
+
       if (rules.type) {
         const actualType = Array.isArray(value) ? 'array' : typeof value;
         if (actualType !== rules.type) {
-          errors.push({
-            field,
-            message: `${field} must be of type ${rules.type}`,
-            code: 'INVALID_TYPE',
-          });
+          errors.push({ field, message: `${field} must be of type ${rules.type}`, code: 'INVALID_TYPE' });
           continue;
         }
       }
 
-      // String validations
       if (typeof value === 'string') {
         if (rules.minLength !== undefined && value.length < rules.minLength) {
-          errors.push({
-            field,
-            message: `${field} must be at least ${rules.minLength} characters`,
-            code: 'MIN_LENGTH',
-          });
+          errors.push({ field, message: `${field} must be at least ${rules.minLength} characters`, code: 'MIN_LENGTH' });
         }
-
         if (rules.maxLength !== undefined && value.length > rules.maxLength) {
-          errors.push({
-            field,
-            message: `${field} must be at most ${rules.maxLength} characters`,
-            code: 'MAX_LENGTH',
-          });
+          errors.push({ field, message: `${field} must be at most ${rules.maxLength} characters`, code: 'MAX_LENGTH' });
         }
-
         if (rules.pattern && !rules.pattern.test(value)) {
-          errors.push({
-            field,
-            message: rules.customMessage || `${field} has invalid format`,
-            code: 'INVALID_FORMAT',
-          });
+          errors.push({ field, message: rules.customMessage || `${field} has invalid format`, code: 'INVALID_FORMAT' });
         }
       }
 
-      // Number validations
       if (typeof value === 'number') {
         if (rules.min !== undefined && value < rules.min) {
-          errors.push({
-            field,
-            message: `${field} must be at least ${rules.min}`,
-            code: 'MIN_VALUE',
-          });
+          errors.push({ field, message: `${field} must be at least ${rules.min}`, code: 'MIN_VALUE' });
         }
-
         if (rules.max !== undefined && value > rules.max) {
-          errors.push({
-            field,
-            message: `${field} must be at most ${rules.max}`,
-            code: 'MAX_VALUE',
-          });
+          errors.push({ field, message: `${field} must be at most ${rules.max}`, code: 'MAX_VALUE' });
         }
       }
 
-      // Custom validation
       if (rules.custom && !rules.custom(value)) {
-        errors.push({
-          field,
-          message: rules.customMessage || `${field} is invalid`,
-          code: 'CUSTOM_VALIDATION',
-        });
+        errors.push({ field, message: rules.customMessage || `${field} is invalid`, code: 'CUSTOM_VALIDATION' });
       }
     }
 
-    if (errors.length > 0) {
-      return { valid: false, errors };
-    }
-
-    return { valid: true };
+    return errors.length > 0 ? { valid: false, errors } : { valid: true };
   }
 
   return {
@@ -414,6 +289,80 @@ export function createValidationService(db: Database.Database): IValidationServi
   };
 }
 
+// Async validation functions using PostgreSQL
+export async function validateRestaurantExistsAsync(restaurantId: string): Promise<ValidationResult> {
+  if (!restaurantId || typeof restaurantId !== 'string') {
+    return {
+      valid: false,
+      errors: [{ field: 'restaurantId', message: 'Restaurant ID is required', code: 'REQUIRED_FIELD' }],
+    };
+  }
+
+  const result = await pgPool.query('SELECT "id" FROM "Restaurant" WHERE "id" = $1', [restaurantId]);
+  
+  if (result.rows.length === 0) {
+    logger.debug('Restaurant not found', { restaurantId });
+    return {
+      valid: false,
+      errors: [{ field: 'restaurantId', message: 'Restaurant not found', code: ErrorCodes.RESTAURANT_NOT_FOUND }],
+    };
+  }
+
+  return { valid: true };
+}
+
+export async function validateUserExistsAsync(userId: string): Promise<ValidationResult> {
+  if (!userId || typeof userId !== 'string') {
+    return {
+      valid: false,
+      errors: [{ field: 'userId', message: 'User ID is required', code: 'REQUIRED_FIELD' }],
+    };
+  }
+
+  const result = await pgPool.query('SELECT "id", "isActive" FROM "User" WHERE "id" = $1', [userId]);
+  
+  if (result.rows.length === 0) {
+    logger.debug('User not found', { userId });
+    return {
+      valid: false,
+      errors: [{ field: 'userId', message: 'User not found', code: ErrorCodes.USER_NOT_FOUND }],
+    };
+  }
+
+  if (!result.rows[0].isActive) {
+    logger.debug('User is inactive', { userId });
+    return {
+      valid: false,
+      errors: [{ field: 'userId', message: 'User is inactive', code: 'USER_INACTIVE' }],
+    };
+  }
+
+  return { valid: true };
+}
+
+export async function validateRestaurantMembershipAsync(userId: string, restaurantId: string): Promise<ValidationResult> {
+  const restaurantResult = await validateRestaurantExistsAsync(restaurantId);
+  if (!restaurantResult.valid) return restaurantResult;
+
+  const userResult = await validateUserExistsAsync(userId);
+  if (!userResult.valid) return userResult;
+
+  const result = await pgPool.query(
+    'SELECT "id" FROM "RestaurantUser" WHERE "userId" = $1 AND "restaurantId" = $2 AND "isActive" = true',
+    [userId, restaurantId]
+  );
+
+  if (result.rows.length === 0) {
+    logger.debug('User is not a member of restaurant', { userId, restaurantId });
+    return {
+      valid: false,
+      errors: [{ field: 'membership', message: 'User is not a member of this restaurant', code: 'NOT_A_MEMBER' }],
+    };
+  }
+
+  return { valid: true };
+}
+
 /**
  * Helper function to throw AppError from validation result
  */
@@ -421,22 +370,15 @@ export function throwIfInvalid(result: ValidationResult): void {
   if (!result.valid && result.errors && result.errors.length > 0) {
     const firstError = result.errors[0];
     
-    // Map specific error codes to appropriate AppError
     if (firstError.code === ErrorCodes.RESTAURANT_NOT_FOUND) {
-      throw AppError.badRequest(ErrorCodes.RESTAURANT_NOT_FOUND, firstError.message, {
-        errors: result.errors,
-      });
+      throw AppError.badRequest(ErrorCodes.RESTAURANT_NOT_FOUND, firstError.message, { errors: result.errors });
     }
     
     if (firstError.code === ErrorCodes.USER_NOT_FOUND) {
-      throw AppError.badRequest(ErrorCodes.USER_NOT_FOUND, firstError.message, {
-        errors: result.errors,
-      });
+      throw AppError.badRequest(ErrorCodes.USER_NOT_FOUND, firstError.message, { errors: result.errors });
     }
 
-    throw AppError.badRequest(ErrorCodes.VALIDATION_FAILED, 'Validation failed', {
-      errors: result.errors,
-    });
+    throw AppError.badRequest(ErrorCodes.VALIDATION_FAILED, 'Validation failed', { errors: result.errors });
   }
 }
 

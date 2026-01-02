@@ -1,677 +1,203 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-import fs from 'fs';
-import { seedDatabase } from './seedDb';
+/**
+ * PostgreSQL Database Initialization
+ * 
+ * This module initializes the PostgreSQL database schema and seeds initial data.
+ */
+import { Pool } from 'pg';
+import * as fs from 'fs';
+import * as path from 'path';
 import { logger } from '../services/loggerService';
 
-const dbPath = process.env.DATABASE_URL?.replace('file:', '') || path.join(__dirname, '../../dev.db');
-const db = new Database(dbPath);
+const connectionString = process.env.DATABASE_URL || 'postgresql://localhost:5432/resto';
 
-// Включаем foreign keys
-db.pragma('foreign_keys = ON');
+const pool = new Pool({
+  connectionString,
+  max: 5,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+});
 
-// Функция для проверки существования таблицы
-function tableExists(tableName: string): boolean {
-  const result = db.prepare(`
-    SELECT name FROM sqlite_master 
-    WHERE type='table' AND name=?
-  `).get(tableName);
-  return !!result;
+/**
+ * Check if a table exists in the database
+ */
+async function tableExists(tableName: string): Promise<boolean> {
+  const result = await pool.query(`
+    SELECT EXISTS (
+      SELECT FROM information_schema.tables 
+      WHERE table_schema = 'public' 
+      AND table_name = $1
+    )
+  `, [tableName]);
+  return result.rows[0].exists;
 }
 
-// Функция для выполнения SQL из файла
-function executeMigration(sql: string) {
-  const statements = sql.split(';').filter(s => s.trim().length > 0);
-  const transaction = db.transaction(() => {
-    for (const statement of statements) {
-      const trimmed = statement.trim();
-      if (trimmed && !trimmed.startsWith('--') && !trimmed.startsWith('/*')) {
-        try {
-          db.exec(trimmed);
-        } catch (error: any) {
-          // Игнорируем ошибки если таблица уже существует или индекс уже существует
-          if (!error.message.includes('already exists') && !error.message.includes('duplicate')) {
-            logger.warn(`Warning executing SQL: ${trimmed.substring(0, 50)}...`, { error: error.message });
-          }
+/**
+ * Execute SQL schema file
+ */
+async function executeSchemaFile(filePath: string): Promise<void> {
+  const sql = fs.readFileSync(filePath, 'utf-8');
+  
+  // Split by semicolons but handle $$ blocks for functions
+  const statements: string[] = [];
+  let current = '';
+  let inDollarBlock = false;
+  
+  for (const line of sql.split('\n')) {
+    const trimmed = line.trim();
+    
+    // Skip comments
+    if (trimmed.startsWith('--')) {
+      continue;
+    }
+    
+    // Track $$ blocks (for functions/triggers)
+    if (trimmed.includes('$$')) {
+      const count = (trimmed.match(/\$\$/g) || []).length;
+      if (count % 2 === 1) {
+        inDollarBlock = !inDollarBlock;
+      }
+    }
+    
+    current += line + '\n';
+    
+    // If we're not in a $$ block and line ends with semicolon, it's a complete statement
+    if (!inDollarBlock && trimmed.endsWith(';')) {
+      const stmt = current.trim();
+      if (stmt && !stmt.startsWith('--')) {
+        statements.push(stmt);
+      }
+      current = '';
+    }
+  }
+  
+  // Add any remaining statement
+  if (current.trim()) {
+    statements.push(current.trim());
+  }
+  
+  for (const statement of statements) {
+    if (statement.trim()) {
+      try {
+        await pool.query(statement);
+      } catch (error: any) {
+        // Ignore "already exists" errors
+        if (!error.message.includes('already exists') && 
+            !error.message.includes('duplicate key')) {
+          logger.warn(`Warning executing SQL: ${statement.substring(0, 100)}...`, { error: error.message });
         }
       }
     }
-  });
-  transaction();
-}
-
-export async function initDatabase() {
-  logger.info('Initializing database...');
-
-  // Если таблица User уже существует, считаем что БД инициализирована
-  if (tableExists('User')) {
-    logger.info('Database already initialized');
-    
-    // Ensure TelegramSession table exists (added in later migration)
-    if (!tableExists('TelegramSession')) {
-      logger.info('Creating TelegramSession table...');
-      
-      // Create table directly (not through executeMigration to avoid transaction issues)
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS "TelegramSession" (
-          "id" TEXT NOT NULL PRIMARY KEY,
-          "telegram_user_id" TEXT NOT NULL,
-          "step" TEXT NOT NULL DEFAULT 'idle',
-          "invite_token" TEXT,
-          "registration_data" TEXT,
-          "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          "expires_at" DATETIME NOT NULL
-        )
-      `);
-      
-      // Create indexes
-      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS "TelegramSession_telegram_user_id_key" ON "TelegramSession"("telegram_user_id")`);
-      db.exec(`CREATE INDEX IF NOT EXISTS "TelegramSession_telegram_user_id_idx" ON "TelegramSession"("telegram_user_id")`);
-      db.exec(`CREATE INDEX IF NOT EXISTS "TelegramSession_expires_at_idx" ON "TelegramSession"("expires_at")`);
-      
-      logger.info('TelegramSession table created');
-    }
-
-    // Ensure SwapRequest table exists (added in later migration)
-    if (!tableExists('SwapRequest')) {
-      logger.info('Creating SwapRequest table...');
-      
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS "SwapRequest" (
-          "id" TEXT NOT NULL PRIMARY KEY,
-          "shiftId" TEXT NOT NULL,
-          "fromUserId" TEXT NOT NULL,
-          "toUserId" TEXT NOT NULL,
-          "status" TEXT NOT NULL DEFAULT 'PENDING',
-          "requestedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          "respondedAt" DATETIME,
-          "approvedAt" DATETIME,
-          "approvedById" TEXT,
-          "expiresAt" DATETIME NOT NULL,
-          "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          CONSTRAINT "SwapRequest_shiftId_fkey" FOREIGN KEY ("shiftId") REFERENCES "Shift" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-          CONSTRAINT "SwapRequest_fromUserId_fkey" FOREIGN KEY ("fromUserId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-          CONSTRAINT "SwapRequest_toUserId_fkey" FOREIGN KEY ("toUserId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-          CONSTRAINT "SwapRequest_approvedById_fkey" FOREIGN KEY ("approvedById") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE
-        )
-      `);
-      
-      // Create indexes
-      db.exec(`CREATE INDEX IF NOT EXISTS "SwapRequest_shiftId_idx" ON "SwapRequest"("shiftId")`);
-      db.exec(`CREATE INDEX IF NOT EXISTS "SwapRequest_fromUserId_idx" ON "SwapRequest"("fromUserId")`);
-      db.exec(`CREATE INDEX IF NOT EXISTS "SwapRequest_toUserId_idx" ON "SwapRequest"("toUserId")`);
-      db.exec(`CREATE INDEX IF NOT EXISTS "SwapRequest_status_idx" ON "SwapRequest"("status")`);
-      db.exec(`CREATE INDEX IF NOT EXISTS "SwapRequest_expiresAt_idx" ON "SwapRequest"("expiresAt")`);
-      
-      logger.info('SwapRequest table created');
-    }
-
-    // Add enableReminders and reminderHoursBefore columns to NotificationSettings if they don't exist
-    try {
-      const tableInfo = db.prepare(`PRAGMA table_info("NotificationSettings")`).all() as { name: string }[];
-      const columnNames = tableInfo.map(col => col.name);
-      
-      if (!columnNames.includes('enableReminders')) {
-        logger.info('Adding enableReminders column to NotificationSettings...');
-        db.exec(`ALTER TABLE "NotificationSettings" ADD COLUMN "enableReminders" BOOLEAN NOT NULL DEFAULT true`);
-        logger.info('enableReminders column added');
-      }
-      
-      if (!columnNames.includes('reminderHoursBefore')) {
-        logger.info('Adding reminderHoursBefore column to NotificationSettings...');
-        db.exec(`ALTER TABLE "NotificationSettings" ADD COLUMN "reminderHoursBefore" INTEGER NOT NULL DEFAULT 12`);
-        logger.info('reminderHoursBefore column added');
-      }
-    } catch (error: any) {
-      logger.warn('Error adding new columns to NotificationSettings', { error: error.message });
-    }
-    
-    return;
   }
-
-  logger.info('Creating tables...');
-
-  // Создаем все таблицы базы данных
-  const schema = `
-    -- User table
-    CREATE TABLE IF NOT EXISTS "User" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "email" TEXT NOT NULL,
-      "passwordHash" TEXT NOT NULL,
-      "firstName" TEXT NOT NULL,
-      "lastName" TEXT NOT NULL,
-      "phone" TEXT,
-      "telegramId" TEXT,
-      "role" TEXT NOT NULL DEFAULT 'EMPLOYEE',
-      "twoFactorEnabled" BOOLEAN NOT NULL DEFAULT false,
-      "twoFactorSecret" TEXT,
-      "isActive" BOOLEAN NOT NULL DEFAULT true,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS "User_email_key" ON "User"("email");
-    CREATE INDEX IF NOT EXISTS "User_email_idx" ON "User"("email");
-    CREATE INDEX IF NOT EXISTS "User_role_idx" ON "User"("role");
-    CREATE UNIQUE INDEX IF NOT EXISTS "User_telegramId_key" ON "User"("telegramId");
-    CREATE INDEX IF NOT EXISTS "User_telegramId_idx" ON "User"("telegramId");
-
-    -- Restaurant table
-    CREATE TABLE IF NOT EXISTS "Restaurant" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "name" TEXT NOT NULL,
-      "address" TEXT,
-      "phone" TEXT,
-      "email" TEXT,
-      "isActive" BOOLEAN NOT NULL DEFAULT true,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "managerId" TEXT,
-      CONSTRAINT "Restaurant_managerId_fkey" FOREIGN KEY ("managerId") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "Restaurant_managerId_idx" ON "Restaurant"("managerId");
-
-    -- Department table
-    CREATE TABLE IF NOT EXISTS "Department" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "restaurantId" TEXT NOT NULL,
-      "name" TEXT NOT NULL,
-      "isActive" BOOLEAN NOT NULL DEFAULT true,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "Department_restaurantId_fkey" FOREIGN KEY ("restaurantId") REFERENCES "Restaurant" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "Department_restaurantId_idx" ON "Department"("restaurantId");
-
-    -- Position table
-    CREATE TABLE IF NOT EXISTS "Position" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "restaurantId" TEXT NOT NULL,
-      "name" TEXT NOT NULL,
-      "isActive" BOOLEAN NOT NULL DEFAULT true,
-      "bonusPerShift" REAL NOT NULL DEFAULT 0,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "Position_restaurantId_fkey" FOREIGN KEY ("restaurantId") REFERENCES "Restaurant" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "Position_restaurantId_idx" ON "Position"("restaurantId");
-
-    -- Permission table
-    CREATE TABLE IF NOT EXISTS "Permission" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "code" TEXT NOT NULL,
-      "name" TEXT NOT NULL,
-      "description" TEXT,
-      "category" TEXT NOT NULL,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS "Permission_code_key" ON "Permission"("code");
-    CREATE INDEX IF NOT EXISTS "Permission_code_idx" ON "Permission"("code");
-    CREATE INDEX IF NOT EXISTS "Permission_category_idx" ON "Permission"("category");
-
-    -- PositionPermission table
-    CREATE TABLE IF NOT EXISTS "PositionPermission" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "positionId" TEXT NOT NULL,
-      "permissionId" TEXT NOT NULL,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "PositionPermission_positionId_fkey" FOREIGN KEY ("positionId") REFERENCES "Position" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "PositionPermission_permissionId_fkey" FOREIGN KEY ("permissionId") REFERENCES "Permission" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "PositionPermission_positionId_idx" ON "PositionPermission"("positionId");
-    CREATE INDEX IF NOT EXISTS "PositionPermission_permissionId_idx" ON "PositionPermission"("permissionId");
-    CREATE UNIQUE INDEX IF NOT EXISTS "PositionPermission_positionId_permissionId_key" ON "PositionPermission"("positionId", "permissionId");
-
-    -- RestaurantUser table
-    CREATE TABLE IF NOT EXISTS "RestaurantUser" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "restaurantId" TEXT NOT NULL,
-      "userId" TEXT NOT NULL,
-      "positionId" TEXT NOT NULL,
-      "departmentId" TEXT,
-      "isActive" BOOLEAN NOT NULL DEFAULT true,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "RestaurantUser_restaurantId_fkey" FOREIGN KEY ("restaurantId") REFERENCES "Restaurant" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "RestaurantUser_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "RestaurantUser_positionId_fkey" FOREIGN KEY ("positionId") REFERENCES "Position" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "RestaurantUser_departmentId_fkey" FOREIGN KEY ("departmentId") REFERENCES "Department" ("id") ON DELETE SET NULL ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "RestaurantUser_restaurantId_idx" ON "RestaurantUser"("restaurantId");
-    CREATE INDEX IF NOT EXISTS "RestaurantUser_userId_idx" ON "RestaurantUser"("userId");
-    CREATE INDEX IF NOT EXISTS "RestaurantUser_positionId_idx" ON "RestaurantUser"("positionId");
-    CREATE INDEX IF NOT EXISTS "RestaurantUser_departmentId_idx" ON "RestaurantUser"("departmentId");
-    CREATE UNIQUE INDEX IF NOT EXISTS "RestaurantUser_restaurantId_userId_key" ON "RestaurantUser"("restaurantId", "userId");
-
-    -- ShiftTemplate table
-    CREATE TABLE IF NOT EXISTS "ShiftTemplate" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "restaurantId" TEXT,
-      "name" TEXT NOT NULL,
-      "startHour" INTEGER NOT NULL,
-      "endHour" INTEGER NOT NULL,
-      "color" TEXT,
-      "rate" REAL NOT NULL DEFAULT 0,
-      "isActive" BOOLEAN NOT NULL DEFAULT true,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "ShiftTemplate_restaurantId_fkey" FOREIGN KEY ("restaurantId") REFERENCES "Restaurant" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "ShiftTemplate_restaurantId_idx" ON "ShiftTemplate"("restaurantId");
-    CREATE UNIQUE INDEX IF NOT EXISTS "ShiftTemplate_restaurantId_name_key" ON "ShiftTemplate"("restaurantId", "name");
-
-    -- ScheduleTemplate table
-    CREATE TABLE IF NOT EXISTS "ScheduleTemplate" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "restaurantId" TEXT NOT NULL,
-      "createdById" TEXT NOT NULL,
-      "name" TEXT NOT NULL,
-      "description" TEXT,
-      "periodType" TEXT NOT NULL DEFAULT 'week',
-      "shiftsData" TEXT NOT NULL,
-      "isActive" BOOLEAN NOT NULL DEFAULT true,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "ScheduleTemplate_restaurantId_fkey" FOREIGN KEY ("restaurantId") REFERENCES "Restaurant" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "ScheduleTemplate_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "ScheduleTemplate_restaurantId_idx" ON "ScheduleTemplate"("restaurantId");
-    CREATE INDEX IF NOT EXISTS "ScheduleTemplate_createdById_idx" ON "ScheduleTemplate"("createdById");
-    CREATE INDEX IF NOT EXISTS "ScheduleTemplate_periodType_idx" ON "ScheduleTemplate"("periodType");
-
-    -- Shift table
-    CREATE TABLE IF NOT EXISTS "Shift" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "restaurantId" TEXT NOT NULL,
-      "userId" TEXT NOT NULL,
-      "type" TEXT NOT NULL,
-      "startTime" DATETIME NOT NULL,
-      "endTime" DATETIME NOT NULL,
-      "hours" REAL NOT NULL,
-      "isConfirmed" BOOLEAN NOT NULL DEFAULT false,
-      "isCompleted" BOOLEAN NOT NULL DEFAULT false,
-      "notes" TEXT,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "swapRequested" BOOLEAN NOT NULL DEFAULT false,
-      "swapRequestedTo" TEXT,
-      "employeeResponse" TEXT,
-      "swapApproved" BOOLEAN,
-      CONSTRAINT "Shift_restaurantId_fkey" FOREIGN KEY ("restaurantId") REFERENCES "Restaurant" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "Shift_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "Shift_restaurantId_idx" ON "Shift"("restaurantId");
-    CREATE INDEX IF NOT EXISTS "Shift_userId_idx" ON "Shift"("userId");
-    CREATE INDEX IF NOT EXISTS "Shift_startTime_idx" ON "Shift"("startTime");
-    CREATE INDEX IF NOT EXISTS "Shift_isConfirmed_idx" ON "Shift"("isConfirmed");
-
-    -- Task table
-    CREATE TABLE IF NOT EXISTS "Task" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "restaurantId" TEXT NOT NULL,
-      "createdById" TEXT NOT NULL,
-      "assignedToId" TEXT,
-      "title" TEXT NOT NULL,
-      "description" TEXT,
-      "category" TEXT NOT NULL,
-      "status" TEXT NOT NULL DEFAULT 'NEW',
-      "dueDate" DATETIME,
-      "isRecurring" BOOLEAN NOT NULL DEFAULT false,
-      "recurringRule" TEXT,
-      "qrCode" TEXT,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "completedAt" DATETIME,
-      CONSTRAINT "Task_restaurantId_fkey" FOREIGN KEY ("restaurantId") REFERENCES "Restaurant" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "Task_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
-      CONSTRAINT "Task_assignedToId_fkey" FOREIGN KEY ("assignedToId") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "Task_restaurantId_idx" ON "Task"("restaurantId");
-    CREATE INDEX IF NOT EXISTS "Task_assignedToId_idx" ON "Task"("assignedToId");
-    CREATE INDEX IF NOT EXISTS "Task_status_idx" ON "Task"("status");
-    CREATE INDEX IF NOT EXISTS "Task_category_idx" ON "Task"("category");
-
-    -- TaskAttachment table
-    CREATE TABLE IF NOT EXISTS "TaskAttachment" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "taskId" TEXT NOT NULL,
-      "fileName" TEXT NOT NULL,
-      "filePath" TEXT NOT NULL,
-      "fileSize" INTEGER NOT NULL,
-      "mimeType" TEXT,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "TaskAttachment_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "TaskAttachment_taskId_idx" ON "TaskAttachment"("taskId");
-
-    -- Timesheet table
-    CREATE TABLE IF NOT EXISTS "Timesheet" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "restaurantId" TEXT NOT NULL,
-      "userId" TEXT NOT NULL,
-      "month" INTEGER NOT NULL,
-      "year" INTEGER NOT NULL,
-      "totalHours" REAL NOT NULL DEFAULT 0,
-      "overtimeHours" REAL NOT NULL DEFAULT 0,
-      "lateCount" INTEGER NOT NULL DEFAULT 0,
-      "sickDays" INTEGER NOT NULL DEFAULT 0,
-      "vacationDays" INTEGER NOT NULL DEFAULT 0,
-      "isApproved" BOOLEAN NOT NULL DEFAULT false,
-      "approvedById" TEXT,
-      "approvedAt" DATETIME,
-      "notes" TEXT,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "Timesheet_restaurantId_fkey" FOREIGN KEY ("restaurantId") REFERENCES "Restaurant" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "Timesheet_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "Timesheet_restaurantId_idx" ON "Timesheet"("restaurantId");
-    CREATE INDEX IF NOT EXISTS "Timesheet_userId_idx" ON "Timesheet"("userId");
-    CREATE INDEX IF NOT EXISTS "Timesheet_year_month_idx" ON "Timesheet"("year", "month");
-    CREATE UNIQUE INDEX IF NOT EXISTS "Timesheet_restaurantId_userId_month_year_key" ON "Timesheet"("restaurantId", "userId", "month", "year");
-
-    -- Feedback table
-    CREATE TABLE IF NOT EXISTS "Feedback" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "restaurantId" TEXT NOT NULL,
-      "userId" TEXT,
-      "type" TEXT NOT NULL,
-      "status" TEXT NOT NULL DEFAULT 'PENDING',
-      "title" TEXT NOT NULL,
-      "message" TEXT NOT NULL,
-      "isAnonymous" BOOLEAN NOT NULL DEFAULT false,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "resolvedAt" DATETIME,
-      CONSTRAINT "Feedback_restaurantId_fkey" FOREIGN KEY ("restaurantId") REFERENCES "Restaurant" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "Feedback_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "Feedback_restaurantId_idx" ON "Feedback"("restaurantId");
-    CREATE INDEX IF NOT EXISTS "Feedback_status_idx" ON "Feedback"("status");
-    CREATE INDEX IF NOT EXISTS "Feedback_type_idx" ON "Feedback"("type");
-
-    -- FeedbackAttachment table
-    CREATE TABLE IF NOT EXISTS "FeedbackAttachment" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "feedbackId" TEXT NOT NULL,
-      "fileName" TEXT NOT NULL,
-      "filePath" TEXT NOT NULL,
-      "fileSize" INTEGER NOT NULL,
-      "mimeType" TEXT,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "FeedbackAttachment_feedbackId_fkey" FOREIGN KEY ("feedbackId") REFERENCES "Feedback" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "FeedbackAttachment_feedbackId_idx" ON "FeedbackAttachment"("feedbackId");
-
-    -- ActionLog table
-    CREATE TABLE IF NOT EXISTS "ActionLog" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "userId" TEXT NOT NULL,
-      "type" TEXT NOT NULL,
-      "entityType" TEXT NOT NULL,
-      "entityId" TEXT,
-      "description" TEXT NOT NULL,
-      "metadata" TEXT,
-      "ipAddress" TEXT,
-      "userAgent" TEXT,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "taskId" TEXT,
-      CONSTRAINT "ActionLog_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "ActionLog_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task" ("id") ON DELETE SET NULL ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "ActionLog_userId_idx" ON "ActionLog"("userId");
-    CREATE INDEX IF NOT EXISTS "ActionLog_entityType_entityId_idx" ON "ActionLog"("entityType", "entityId");
-    CREATE INDEX IF NOT EXISTS "ActionLog_createdAt_idx" ON "ActionLog"("createdAt");
-    CREATE INDEX IF NOT EXISTS "ActionLog_type_idx" ON "ActionLog"("type");
-
-    -- InviteLink table
-    CREATE TABLE IF NOT EXISTS "InviteLink" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "token" TEXT NOT NULL,
-      "restaurantId" TEXT,
-      "positionId" TEXT,
-      "departmentId" TEXT,
-      "createdById" TEXT NOT NULL,
-      "expiresAt" DATETIME,
-      "maxUses" INTEGER NOT NULL DEFAULT 1,
-      "usedCount" INTEGER NOT NULL DEFAULT 0,
-      "isActive" BOOLEAN NOT NULL DEFAULT true,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "InviteLink_token_key" UNIQUE ("token"),
-      CONSTRAINT "InviteLink_restaurantId_fkey" FOREIGN KEY ("restaurantId") REFERENCES "Restaurant" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "InviteLink_positionId_fkey" FOREIGN KEY ("positionId") REFERENCES "Position" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
-      CONSTRAINT "InviteLink_departmentId_fkey" FOREIGN KEY ("departmentId") REFERENCES "Department" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
-      CONSTRAINT "InviteLink_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "InviteLink_token_idx" ON "InviteLink"("token");
-    CREATE INDEX IF NOT EXISTS "InviteLink_restaurantId_idx" ON "InviteLink"("restaurantId");
-    CREATE INDEX IF NOT EXISTS "InviteLink_createdById_idx" ON "InviteLink"("createdById");
-    CREATE INDEX IF NOT EXISTS "InviteLink_isActive_idx" ON "InviteLink"("isActive");
-
-    -- ShiftSwapHistory table
-    CREATE TABLE IF NOT EXISTS "ShiftSwapHistory" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "shiftId" TEXT,
-      "restaurantId" TEXT NOT NULL,
-      "fromUserId" TEXT NOT NULL,
-      "toUserId" TEXT,
-      "status" TEXT NOT NULL DEFAULT 'REQUESTED',
-      "shiftDate" DATETIME NOT NULL,
-      "shiftStartTime" DATETIME,
-      "shiftEndTime" DATETIME,
-      "shiftType" TEXT,
-      "requestedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "approvedAt" DATETIME,
-      "approvedById" TEXT,
-      "notes" TEXT,
-      "changeType" TEXT,
-      CONSTRAINT "ShiftSwapHistory_restaurantId_fkey" FOREIGN KEY ("restaurantId") REFERENCES "Restaurant" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "ShiftSwapHistory_fromUserId_fkey" FOREIGN KEY ("fromUserId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "ShiftSwapHistory_toUserId_fkey" FOREIGN KEY ("toUserId") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
-      CONSTRAINT "ShiftSwapHistory_approvedById_fkey" FOREIGN KEY ("approvedById") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "ShiftSwapHistory_restaurantId_idx" ON "ShiftSwapHistory"("restaurantId");
-    CREATE INDEX IF NOT EXISTS "ShiftSwapHistory_fromUserId_idx" ON "ShiftSwapHistory"("fromUserId");
-    CREATE INDEX IF NOT EXISTS "ShiftSwapHistory_toUserId_idx" ON "ShiftSwapHistory"("toUserId");
-    CREATE INDEX IF NOT EXISTS "ShiftSwapHistory_status_idx" ON "ShiftSwapHistory"("status");
-    CREATE INDEX IF NOT EXISTS "ShiftSwapHistory_shiftDate_idx" ON "ShiftSwapHistory"("shiftDate");
-    CREATE INDEX IF NOT EXISTS "ShiftSwapHistory_requestedAt_idx" ON "ShiftSwapHistory"("requestedAt");
-    CREATE INDEX IF NOT EXISTS "ShiftSwapHistory_changeType_idx" ON "ShiftSwapHistory"("changeType");
-
-    -- Holiday table
-    CREATE TABLE IF NOT EXISTS "Holiday" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "restaurantId" TEXT NOT NULL,
-      "name" TEXT NOT NULL,
-      "date" DATETIME NOT NULL,
-      "type" TEXT NOT NULL DEFAULT 'HOLIDAY',
-      "isRecurring" BOOLEAN NOT NULL DEFAULT false,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "Holiday_restaurantId_fkey" FOREIGN KEY ("restaurantId") REFERENCES "Restaurant" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS "Holiday_restaurantId_date_key" ON "Holiday"("restaurantId", "date");
-    CREATE INDEX IF NOT EXISTS "Holiday_restaurantId_idx" ON "Holiday"("restaurantId");
-    CREATE INDEX IF NOT EXISTS "Holiday_date_idx" ON "Holiday"("date");
-    CREATE INDEX IF NOT EXISTS "Holiday_type_idx" ON "Holiday"("type");
-
-    -- Bonus table
-    CREATE TABLE IF NOT EXISTS "Bonus" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "restaurantId" TEXT NOT NULL,
-      "userId" TEXT NOT NULL,
-      "timesheetId" TEXT,
-      "amount" REAL NOT NULL,
-      "comment" TEXT,
-      "month" INTEGER,
-      "year" INTEGER,
-      "createdById" TEXT NOT NULL,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "Bonus_restaurantId_fkey" FOREIGN KEY ("restaurantId") REFERENCES "Restaurant" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "Bonus_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "Bonus_timesheetId_fkey" FOREIGN KEY ("timesheetId") REFERENCES "Timesheet" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
-      CONSTRAINT "Bonus_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "Bonus_restaurantId_idx" ON "Bonus"("restaurantId");
-    CREATE INDEX IF NOT EXISTS "Bonus_userId_idx" ON "Bonus"("userId");
-    CREATE INDEX IF NOT EXISTS "Bonus_timesheetId_idx" ON "Bonus"("timesheetId");
-    CREATE INDEX IF NOT EXISTS "Bonus_year_month_idx" ON "Bonus"("year", "month");
-    CREATE INDEX IF NOT EXISTS "Bonus_createdAt_idx" ON "Bonus"("createdAt");
-
-    -- Penalty table
-    CREATE TABLE IF NOT EXISTS "Penalty" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "restaurantId" TEXT NOT NULL,
-      "userId" TEXT NOT NULL,
-      "timesheetId" TEXT,
-      "amount" REAL NOT NULL,
-      "comment" TEXT,
-      "month" INTEGER,
-      "year" INTEGER,
-      "createdById" TEXT NOT NULL,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "Penalty_restaurantId_fkey" FOREIGN KEY ("restaurantId") REFERENCES "Restaurant" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "Penalty_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "Penalty_timesheetId_fkey" FOREIGN KEY ("timesheetId") REFERENCES "Timesheet" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
-      CONSTRAINT "Penalty_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "Penalty_restaurantId_idx" ON "Penalty"("restaurantId");
-    CREATE INDEX IF NOT EXISTS "Penalty_userId_idx" ON "Penalty"("userId");
-    CREATE INDEX IF NOT EXISTS "Penalty_timesheetId_idx" ON "Penalty"("timesheetId");
-    CREATE INDEX IF NOT EXISTS "Penalty_year_month_idx" ON "Penalty"("year", "month");
-    CREATE INDEX IF NOT EXISTS "Penalty_createdAt_idx" ON "Penalty"("createdAt");
-
-    -- Notification table
-    CREATE TABLE IF NOT EXISTS "Notification" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "userId" TEXT NOT NULL,
-      "type" TEXT NOT NULL,
-      "title" TEXT NOT NULL,
-      "message" TEXT NOT NULL,
-      "link" TEXT,
-      "isRead" BOOLEAN NOT NULL DEFAULT false,
-      "metadata" TEXT,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "readAt" DATETIME,
-      CONSTRAINT "Notification_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "Notification_userId_idx" ON "Notification"("userId");
-    CREATE INDEX IF NOT EXISTS "Notification_isRead_idx" ON "Notification"("isRead");
-    CREATE INDEX IF NOT EXISTS "Notification_createdAt_idx" ON "Notification"("createdAt");
-    CREATE INDEX IF NOT EXISTS "Notification_type_idx" ON "Notification"("type");
-
-    -- PushSubscription table
-    CREATE TABLE IF NOT EXISTS "PushSubscription" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "userId" TEXT NOT NULL,
-      "endpoint" TEXT NOT NULL,
-      "p256dh" TEXT NOT NULL,
-      "auth" TEXT NOT NULL,
-      "userAgent" TEXT,
-      "isActive" BOOLEAN NOT NULL DEFAULT true,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "PushSubscription_endpoint_key" UNIQUE ("endpoint"),
-      CONSTRAINT "PushSubscription_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "PushSubscription_userId_idx" ON "PushSubscription"("userId");
-    CREATE INDEX IF NOT EXISTS "PushSubscription_isActive_idx" ON "PushSubscription"("isActive");
-
-    -- NotificationSettings table
-    CREATE TABLE IF NOT EXISTS "NotificationSettings" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "userId" TEXT NOT NULL,
-      "enablePushNotifications" BOOLEAN NOT NULL DEFAULT true,
-      "enableTaskNotifications" BOOLEAN NOT NULL DEFAULT true,
-      "enableShiftNotifications" BOOLEAN NOT NULL DEFAULT true,
-      "enableSwapNotifications" BOOLEAN NOT NULL DEFAULT true,
-      "enableTimesheetNotifications" BOOLEAN NOT NULL DEFAULT true,
-      "enableInAppNotifications" BOOLEAN NOT NULL DEFAULT true,
-      "enableReminders" BOOLEAN NOT NULL DEFAULT true,
-      "reminderHoursBefore" INTEGER NOT NULL DEFAULT 12,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "NotificationSettings_userId_key" UNIQUE ("userId"),
-      CONSTRAINT "NotificationSettings_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "NotificationSettings_userId_idx" ON "NotificationSettings"("userId");
-
-    -- TelegramSession table (for bot session persistence)
-    CREATE TABLE IF NOT EXISTS "TelegramSession" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "telegram_user_id" TEXT NOT NULL,
-      "step" TEXT NOT NULL DEFAULT 'idle',
-      "invite_token" TEXT,
-      "registration_data" TEXT,
-      "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "expires_at" DATETIME NOT NULL
-    );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS "TelegramSession_telegram_user_id_key" ON "TelegramSession"("telegram_user_id");
-    CREATE INDEX IF NOT EXISTS "TelegramSession_telegram_user_id_idx" ON "TelegramSession"("telegram_user_id");
-    CREATE INDEX IF NOT EXISTS "TelegramSession_expires_at_idx" ON "TelegramSession"("expires_at");
-
-    -- SwapRequest table (for shift swap requests)
-    CREATE TABLE IF NOT EXISTS "SwapRequest" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "shiftId" TEXT NOT NULL,
-      "fromUserId" TEXT NOT NULL,
-      "toUserId" TEXT NOT NULL,
-      "status" TEXT NOT NULL DEFAULT 'PENDING',
-      "requestedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "respondedAt" DATETIME,
-      "approvedAt" DATETIME,
-      "approvedById" TEXT,
-      "expiresAt" DATETIME NOT NULL,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "SwapRequest_shiftId_fkey" FOREIGN KEY ("shiftId") REFERENCES "Shift" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "SwapRequest_fromUserId_fkey" FOREIGN KEY ("fromUserId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "SwapRequest_toUserId_fkey" FOREIGN KEY ("toUserId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "SwapRequest_approvedById_fkey" FOREIGN KEY ("approvedById") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "SwapRequest_shiftId_idx" ON "SwapRequest"("shiftId");
-    CREATE INDEX IF NOT EXISTS "SwapRequest_fromUserId_idx" ON "SwapRequest"("fromUserId");
-    CREATE INDEX IF NOT EXISTS "SwapRequest_toUserId_idx" ON "SwapRequest"("toUserId");
-    CREATE INDEX IF NOT EXISTS "SwapRequest_status_idx" ON "SwapRequest"("status");
-    CREATE INDEX IF NOT EXISTS "SwapRequest_expiresAt_idx" ON "SwapRequest"("expiresAt");
-  `;
-
-  executeMigration(schema);
-  logger.info('Database successfully initialized');
-  
-  // Заполняем базу данных начальными данными
-  await seedDatabase();
 }
 
+/**
+ * Initialize the database schema
+ */
+export async function initDatabase(): Promise<void> {
+  logger.info('Initializing PostgreSQL database...');
+  
+  try {
+    // Test connection
+    await pool.query('SELECT 1');
+    logger.info('Connected to PostgreSQL');
+    
+    // Check if database is already initialized
+    if (await tableExists('User')) {
+      logger.info('Database already initialized');
+      
+      // Check for new tables that might need to be added
+      if (!(await tableExists('TelegramSession'))) {
+        logger.info('Creating TelegramSession table...');
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS "TelegramSession" (
+            "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            "telegram_user_id" VARCHAR(100) NOT NULL,
+            "step" VARCHAR(50) NOT NULL DEFAULT 'idle',
+            "invite_token" VARCHAR(255),
+            "registration_data" JSONB,
+            "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            "expires_at" TIMESTAMPTZ NOT NULL
+          )
+        `);
+        await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS "TelegramSession_telegram_user_id_key" ON "TelegramSession"("telegram_user_id")`);
+        logger.info('TelegramSession table created');
+      }
+      
+      if (!(await tableExists('SwapRequest'))) {
+        logger.info('Creating SwapRequest table...');
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS "SwapRequest" (
+            "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            "shiftId" UUID NOT NULL REFERENCES "Shift"("id") ON DELETE CASCADE,
+            "fromUserId" UUID NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+            "toUserId" UUID NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+            "status" VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+            "requestedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            "respondedAt" TIMESTAMPTZ,
+            "approvedAt" TIMESTAMPTZ,
+            "approvedById" UUID REFERENCES "User"("id") ON DELETE SET NULL,
+            "expiresAt" TIMESTAMPTZ NOT NULL,
+            "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS "SwapRequest_status_idx" ON "SwapRequest"("status")`);
+        logger.info('SwapRequest table created');
+      }
+      
+      await pool.end();
+      return;
+    }
+    
+    logger.info('Creating database schema...');
+    
+    // Execute the PostgreSQL schema file
+    const schemaPath = path.join(__dirname, '../database/scripts/postgresql-schema.sql');
+    
+    if (fs.existsSync(schemaPath)) {
+      await executeSchemaFile(schemaPath);
+      logger.info('Schema created from postgresql-schema.sql');
+    } else {
+      logger.error('Schema file not found:', schemaPath);
+      throw new Error('PostgreSQL schema file not found');
+    }
+    
+    logger.info('Database successfully initialized');
+    
+    // Seed the database with initial data
+    await seedDatabase();
+    
+  } catch (error: any) {
+    logger.error('Failed to initialize database', { error: error.message });
+    throw error;
+  } finally {
+    await pool.end();
+  }
+}
+
+/**
+ * Seed the database with initial data
+ */
+async function seedDatabase(): Promise<void> {
+  logger.info('Seeding database with initial data...');
+  
+  // Import seed function
+  const { seedDatabase: seed } = await import('./seedDb-postgres');
+  await seed();
+  
+  logger.info('Database seeded successfully');
+}
+
+// Run if called directly
+if (require.main === module) {
+  initDatabase()
+    .then(() => {
+      logger.info('Database initialization complete');
+      process.exit(0);
+    })
+    .catch((error) => {
+      logger.error('Database initialization failed', { error: error.message });
+      process.exit(1);
+    });
+}

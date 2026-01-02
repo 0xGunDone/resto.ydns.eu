@@ -1,20 +1,12 @@
 /**
- * User Repository
+ * User Repository (PostgreSQL)
  * Data access layer for User entity
  * Requirements: 10.4
  */
 
-import Database from 'better-sqlite3';
+import { pgPool } from '../../utils/db';
 import { User, UserRole, UserWithRelations, RestaurantUser, Restaurant, ActionLog, PushSubscription, NotificationSettings } from '../types';
 import { createBaseRepository, generateId } from './baseRepository';
-import { convertBooleanFields } from '../typeConverters';
-
-/**
- * Helper to safely cast converted row to type
- */
-function toType<T>(row: unknown): T {
-  return row as T;
-}
 
 /**
  * Create options for user queries
@@ -30,8 +22,8 @@ export interface UserIncludeOptions {
 /**
  * Create a User repository
  */
-export function createUserRepository(db: Database.Database) {
-  const base = createBaseRepository<User>({ db, tableName: 'User' });
+export function createUserRepository() {
+  const base = createBaseRepository<User>({ tableName: 'User' });
 
   return {
     ...base,
@@ -39,51 +31,51 @@ export function createUserRepository(db: Database.Database) {
     /**
      * Find user by email
      */
-    findByEmail(email: string): User | null {
-      const row = db.prepare('SELECT * FROM User WHERE email = ?').get(email);
-      return row ? toType<User>(convertBooleanFields(row as Record<string, unknown>)) : null;
+    async findByEmail(email: string): Promise<User | null> {
+      const result = await pgPool.query('SELECT * FROM "User" WHERE "email" = $1', [email]);
+      return result.rows[0] || null;
     },
 
     /**
      * Find user by Telegram ID
      */
-    findByTelegramId(telegramId: string): User | null {
-      const row = db.prepare('SELECT * FROM User WHERE telegramId = ?').get(telegramId);
-      return row ? toType<User>(convertBooleanFields(row as Record<string, unknown>)) : null;
+    async findByTelegramId(telegramId: string): Promise<User | null> {
+      const result = await pgPool.query('SELECT * FROM "User" WHERE "telegramId" = $1', [telegramId]);
+      return result.rows[0] || null;
     },
 
     /**
      * Find user with relations
      */
-    findByIdWithRelations(id: string, include: UserIncludeOptions = {}): UserWithRelations | null {
-      const user = base.findById(id);
+    async findByIdWithRelations(id: string, include: UserIncludeOptions = {}): Promise<UserWithRelations | null> {
+      const user = await base.findById(id);
       if (!user) return null;
 
       const result: UserWithRelations = { ...user };
 
       if (include.restaurants) {
-        const rows = db.prepare('SELECT * FROM RestaurantUser WHERE userId = ?').all(id) as Record<string, unknown>[];
-        result.restaurants = rows.map(row => toType<RestaurantUser>(convertBooleanFields(row))) as any;
+        const rows = await pgPool.query('SELECT * FROM "RestaurantUser" WHERE "userId" = $1', [id]);
+        result.restaurants = rows.rows as any;
       }
 
       if (include.managedRestaurants) {
-        const rows = db.prepare('SELECT * FROM Restaurant WHERE managerId = ?').all(id) as Record<string, unknown>[];
-        result.managedRestaurants = rows.map(row => toType<Restaurant>(convertBooleanFields(row)));
+        const rows = await pgPool.query('SELECT * FROM "Restaurant" WHERE "managerId" = $1', [id]);
+        result.managedRestaurants = rows.rows as Restaurant[];
       }
 
       if (include.actionLogs) {
-        const rows = db.prepare('SELECT * FROM ActionLog WHERE userId = ?').all(id) as Record<string, unknown>[];
-        result.actionLogs = rows.map(row => toType<ActionLog>(convertBooleanFields(row)));
+        const rows = await pgPool.query('SELECT * FROM "ActionLog" WHERE "userId" = $1', [id]);
+        result.actionLogs = rows.rows as ActionLog[];
       }
 
       if (include.pushSubscriptions) {
-        const rows = db.prepare('SELECT * FROM PushSubscription WHERE userId = ? AND isActive = 1').all(id) as Record<string, unknown>[];
-        result.pushSubscriptions = rows.map(row => toType<PushSubscription>(convertBooleanFields(row)));
+        const rows = await pgPool.query('SELECT * FROM "PushSubscription" WHERE "userId" = $1 AND "isActive" = true', [id]);
+        result.pushSubscriptions = rows.rows as PushSubscription[];
       }
 
       if (include.NotificationSettings) {
-        const row = db.prepare('SELECT * FROM NotificationSettings WHERE userId = ?').get(id);
-        result.NotificationSettings = row ? toType<NotificationSettings>(convertBooleanFields(row as Record<string, unknown>)) : undefined;
+        const row = await pgPool.query('SELECT * FROM "NotificationSettings" WHERE "userId" = $1', [id]);
+        result.NotificationSettings = row.rows[0] as NotificationSettings | undefined;
       }
 
       return result;
@@ -92,57 +84,57 @@ export function createUserRepository(db: Database.Database) {
     /**
      * Find all active users
      */
-    findAllActive(): User[] {
+    async findAllActive(): Promise<User[]> {
       return base.findMany({ where: { isActive: true } });
     },
 
     /**
      * Find users by role
      */
-    findByRole(role: UserRole): User[] {
+    async findByRole(role: UserRole): Promise<User[]> {
       return base.findMany({ where: { role } });
     },
 
     /**
      * Check if user is owner or admin
      */
-    isOwnerOrAdmin(userId: string): boolean {
-      const user = base.findById(userId);
+    async isOwnerOrAdmin(userId: string): Promise<boolean> {
+      const user = await base.findById(userId);
       return user !== null && (user.role === 'OWNER' || user.role === 'ADMIN');
     },
 
     /**
      * Update user's last activity (for session tracking)
      */
-    updateLastActivity(userId: string): void {
-      db.prepare('UPDATE User SET updatedAt = ? WHERE id = ?').run(new Date().toISOString(), userId);
+    async updateLastActivity(userId: string): Promise<void> {
+      await pgPool.query('UPDATE "User" SET "updatedAt" = $1 WHERE "id" = $2', [new Date().toISOString(), userId]);
     },
 
     /**
      * Deactivate user
      */
-    deactivate(userId: string): User | null {
+    async deactivate(userId: string): Promise<User | null> {
       return base.updateById(userId, { isActive: false });
     },
 
     /**
      * Activate user
      */
-    activate(userId: string): User | null {
+    async activate(userId: string): Promise<User | null> {
       return base.updateById(userId, { isActive: true });
     },
 
     /**
      * Update user's Telegram ID
      */
-    setTelegramId(userId: string, telegramId: string | null): User | null {
+    async setTelegramId(userId: string, telegramId: string | null): Promise<User | null> {
       return base.updateById(userId, { telegramId });
     },
 
     /**
      * Enable two-factor authentication
      */
-    enableTwoFactor(userId: string, secret: string): User | null {
+    async enableTwoFactor(userId: string, secret: string): Promise<User | null> {
       return base.updateById(userId, { 
         twoFactorSecret: secret, 
         twoFactorEnabled: true 
@@ -152,7 +144,7 @@ export function createUserRepository(db: Database.Database) {
     /**
      * Disable two-factor authentication
      */
-    disableTwoFactor(userId: string): User | null {
+    async disableTwoFactor(userId: string): Promise<User | null> {
       return base.updateById(userId, { 
         twoFactorSecret: null, 
         twoFactorEnabled: false 

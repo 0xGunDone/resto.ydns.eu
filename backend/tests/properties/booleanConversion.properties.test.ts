@@ -2,6 +2,9 @@
  * Property-Based Tests for Boolean Field Conversion
  * **Feature: project-refactoring, Property 5: Boolean Field Conversion**
  * **Validates: Requirements 2.5**
+ * 
+ * Note: PostgreSQL has native boolean type, so these tests verify that
+ * boolean values are preserved correctly (no 0/1 conversion needed).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -9,9 +12,9 @@ import * as fc from 'fast-check';
 import {
   convertBooleanFields,
   isBooleanFieldName,
-  isSqliteBoolean,
-  convertSqliteBoolean,
   toSqliteBoolean,
+  convertSqliteBoolean,
+  isSqliteBoolean,
   isConverted,
 } from '../../src/database/typeConverters';
 
@@ -19,18 +22,18 @@ describe('Boolean Field Conversion Properties', () => {
   /**
    * **Feature: project-refactoring, Property 5: Boolean Field Conversion**
    * 
-   * For any database row containing boolean fields (fields starting with "is" or "has"),
-   * after type conversion, the field values SHALL be true or false (not 0 or 1).
+   * For PostgreSQL, boolean fields should remain as native booleans.
+   * The conversion function should preserve boolean values.
    */
-  it('should convert all boolean fields from 0/1 to true/false', () => {
+  it('should preserve boolean fields as native booleans', () => {
     // Arbitrary for boolean field names (starting with 'is' or 'has')
     const booleanFieldNameArb = fc.oneof(
       fc.string({ minLength: 1, maxLength: 20 }).map(s => `is${s.charAt(0).toUpperCase()}${s.slice(1)}`),
       fc.string({ minLength: 1, maxLength: 20 }).map(s => `has${s.charAt(0).toUpperCase()}${s.slice(1)}`)
     );
 
-    // Arbitrary for SQLite boolean values (0 or 1)
-    const sqliteBooleanArb = fc.constantFrom(0, 1) as fc.Arbitrary<0 | 1>;
+    // Arbitrary for native boolean values (PostgreSQL returns native booleans)
+    const booleanArb = fc.boolean();
 
     // Arbitrary for non-boolean field names
     const nonBooleanFieldNameArb = fc.string({ minLength: 1, maxLength: 20 })
@@ -45,7 +48,7 @@ describe('Boolean Field Conversion Properties', () => {
 
     // Generate a row with mixed boolean and non-boolean fields
     const rowArb = fc.tuple(
-      fc.array(fc.tuple(booleanFieldNameArb, sqliteBooleanArb), { minLength: 1, maxLength: 5 }),
+      fc.array(fc.tuple(booleanFieldNameArb, booleanArb), { minLength: 1, maxLength: 5 }),
       fc.array(fc.tuple(nonBooleanFieldNameArb, nonBooleanValueArb), { minLength: 0, maxLength: 5 })
     ).map(([booleanFields, nonBooleanFields]) => {
       const row: Record<string, unknown> = {};
@@ -62,15 +65,13 @@ describe('Boolean Field Conversion Properties', () => {
       fc.property(rowArb, (row) => {
         const converted = convertBooleanFields(row);
         
-        // Verify all boolean fields are now true/false
+        // Verify all boolean fields remain as native booleans
         for (const [key, originalValue] of Object.entries(row)) {
-          if (isBooleanFieldName(key) && isSqliteBoolean(originalValue)) {
+          if (isBooleanFieldName(key) && typeof originalValue === 'boolean') {
             const convertedValue = converted![key];
-            // Must be a boolean, not 0 or 1
+            // Must be a boolean
             expect(typeof convertedValue).toBe('boolean');
-            expect(convertedValue === true || convertedValue === false).toBe(true);
-            expect(convertedValue).not.toBe(0);
-            expect(convertedValue).not.toBe(1);
+            expect(convertedValue).toBe(originalValue);
           }
         }
         
@@ -81,10 +82,9 @@ describe('Boolean Field Conversion Properties', () => {
   });
 
   /**
-   * Property: Boolean conversion preserves semantic meaning
-   * 0 should become false, 1 should become true
+   * Property: Boolean values should be preserved (PostgreSQL native booleans)
    */
-  it('should preserve semantic meaning: 0 -> false, 1 -> true', () => {
+  it('should preserve boolean values', () => {
     const booleanFieldNameArb = fc.oneof(
       fc.string({ minLength: 1, maxLength: 10 }).map(s => `is${s}`),
       fc.string({ minLength: 1, maxLength: 10 }).map(s => `has${s}`)
@@ -92,12 +92,11 @@ describe('Boolean Field Conversion Properties', () => {
 
     fc.assert(
       fc.property(booleanFieldNameArb, fc.boolean(), (fieldName, boolValue) => {
-        const sqliteValue = boolValue ? 1 : 0;
-        const row = { [fieldName]: sqliteValue };
+        const row = { [fieldName]: boolValue };
         
         const converted = convertBooleanFields(row);
         
-        // The converted value should match the original boolean intent
+        // The converted value should match the original boolean
         expect(converted![fieldName]).toBe(boolValue);
         
         return true;
@@ -117,8 +116,7 @@ describe('Boolean Field Conversion Properties', () => {
       fc.string(),
       fc.integer(),
       fc.constant(null),
-      fc.constant(0),
-      fc.constant(1)
+      fc.boolean()
     );
 
     fc.assert(
@@ -140,10 +138,9 @@ describe('Boolean Field Conversion Properties', () => {
    */
   it('should be idempotent - converting twice gives same result', () => {
     const booleanFieldNameArb = fc.string({ minLength: 1, maxLength: 10 }).map(s => `is${s}`);
-    const sqliteBooleanArb = fc.constantFrom(0, 1) as fc.Arbitrary<0 | 1>;
 
     fc.assert(
-      fc.property(booleanFieldNameArb, sqliteBooleanArb, (fieldName, value) => {
+      fc.property(booleanFieldNameArb, fc.boolean(), (fieldName, value) => {
         const row = { [fieldName]: value };
         
         const converted1 = convertBooleanFields(row);
@@ -159,16 +156,16 @@ describe('Boolean Field Conversion Properties', () => {
   });
 
   /**
-   * Property: Round-trip conversion preserves value
+   * Property: Round-trip conversion preserves value (PostgreSQL native booleans)
    */
   it('should support round-trip conversion', () => {
     fc.assert(
       fc.property(fc.boolean(), (boolValue) => {
-        // Convert to SQLite and back
-        const sqliteValue = toSqliteBoolean(boolValue);
-        const backToBoolean = convertSqliteBoolean(sqliteValue);
+        // For PostgreSQL, toSqliteBoolean and convertSqliteBoolean are identity functions
+        const stored = toSqliteBoolean(boolValue);
+        const retrieved = convertSqliteBoolean(stored);
         
-        expect(backToBoolean).toBe(boolValue);
+        expect(retrieved).toBe(boolValue);
         
         return true;
       }),
@@ -203,5 +200,24 @@ describe('Boolean Field Conversion Properties', () => {
       }),
       { numRuns: 100 }
     );
+  });
+
+  /**
+   * Property: isSqliteBoolean correctly identifies boolean values (PostgreSQL)
+   */
+  it('should correctly identify boolean values', () => {
+    fc.assert(
+      fc.property(fc.boolean(), (value) => {
+        expect(isSqliteBoolean(value)).toBe(true);
+        return true;
+      }),
+      { numRuns: 100 }
+    );
+
+    // Non-boolean values should return false
+    expect(isSqliteBoolean(0)).toBe(false);
+    expect(isSqliteBoolean(1)).toBe(false);
+    expect(isSqliteBoolean('true')).toBe(false);
+    expect(isSqliteBoolean(null)).toBe(false);
   });
 });

@@ -12,13 +12,12 @@ import {
   ValidationSchema,
   ValidationError 
 } from '../services/validationService';
-import { sqliteDb } from '../utils/db';
 
 /**
  * Get validation service instance
  */
 function getValidationService() {
-  return createValidationService(sqliteDb);
+  return createValidationService();
 }
 
 /**

@@ -13,6 +13,11 @@ import { AuthRequest } from '../middleware/auth';
 import { logger } from '../services/loggerService';
 import { PERMISSIONS } from '../utils/permissions';
 import { checkPermission } from '../utils/checkPermissions';
+import { 
+  notifySwapRequested, 
+  notifySwapResponded, 
+  notifySwapApproved 
+} from '../services/notificationService';
 
 // Swap status types
 export type SwapStatus = 
@@ -180,6 +185,9 @@ export const createSwapRequest = async (req: AuthRequest, res: Response, next: N
       toUserId 
     });
 
+    // Send notification to target user (Requirement 1.3)
+    await notifySwapRequested(toUserId, swapRequest);
+
     res.status(201).json({ swapRequest });
   } catch (error) {
     next(error);
@@ -281,6 +289,9 @@ export const respondToSwap = async (req: AuthRequest, res: Response, next: NextF
       newStatus, 
       respondedBy: req.user.id 
     });
+
+    // Send notification to requester (Requirement 2.4)
+    await notifySwapResponded(updatedSwapRequest.fromUserId, updatedSwapRequest);
 
     res.json({ swapRequest: updatedSwapRequest });
   } catch (error) {
@@ -436,6 +447,9 @@ export const approveSwap = async (req: AuthRequest, res: Response, next: NextFun
           approvedBy: req.user.id 
         });
 
+        // Send notification to both employees (Requirement 3.4)
+        await notifySwapApproved([originalUserId, newUserId], updatedSwapRequest);
+
         res.json({ swapRequest: updatedSwapRequest });
       } catch (error) {
         // Rollback on error - the shift update failed
@@ -499,6 +513,9 @@ export const approveSwap = async (req: AuthRequest, res: Response, next: NextFun
         swapRequestId: id, 
         rejectedBy: req.user.id 
       });
+
+      // Send notification to both employees (Requirement 3.4)
+      await notifySwapApproved([swapRequest.fromUserId, swapRequest.toUserId], updatedSwapRequest);
 
       res.json({ swapRequest: updatedSwapRequest });
     }

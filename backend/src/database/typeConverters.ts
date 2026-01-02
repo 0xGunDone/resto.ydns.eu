@@ -1,7 +1,10 @@
 /**
- * Type Converters Module
- * Handles conversion between SQLite storage types and TypeScript types
+ * Type Converters Module (PostgreSQL)
+ * Handles conversion between PostgreSQL storage types and TypeScript types
  * Requirements: 2.5, 6.4
+ * 
+ * Note: PostgreSQL has native boolean type, so boolean conversion is not needed.
+ * This module is kept for backward compatibility and date handling.
  */
 
 import { BOOLEAN_FIELD_PREFIXES, RawDatabaseRow } from './types';
@@ -18,27 +21,6 @@ const CONVERTED_SYMBOL = Symbol('converted');
  */
 export function isBooleanFieldName(fieldName: string): boolean {
   return BOOLEAN_FIELD_PREFIXES.some(prefix => fieldName.startsWith(prefix));
-}
-
-/**
- * Check if a value is a SQLite boolean (0 or 1)
- */
-export function isSqliteBoolean(value: unknown): value is 0 | 1 {
-  return value === 0 || value === 1;
-}
-
-/**
- * Convert a SQLite boolean (0/1) to JavaScript boolean
- */
-export function convertSqliteBoolean(value: 0 | 1): boolean {
-  return value === 1;
-}
-
-/**
- * Convert a JavaScript boolean to SQLite boolean (0/1)
- */
-export function toSqliteBoolean(value: boolean): 0 | 1 {
-  return value ? 1 : 0;
 }
 
 /**
@@ -65,50 +47,36 @@ function markAsConverted<T extends object>(row: T): T {
 }
 
 /**
- * Convert boolean fields in a database row from 0/1 to true/false
- * Optimized to not convert already-converted rows
+ * Convert boolean fields in a database row
+ * For PostgreSQL, this is mostly a no-op since PostgreSQL has native boolean type.
+ * Kept for backward compatibility.
  * 
  * @param row - Raw database row
- * @returns Row with boolean fields converted
+ * @returns Row (unchanged for PostgreSQL)
  */
 export function convertBooleanFields<T extends RawDatabaseRow>(row: T | null | undefined): T | null {
-  // Handle null/undefined
   if (row === null || row === undefined) {
     return null;
   }
 
-  // Skip if not an object
   if (typeof row !== 'object') {
     return row;
   }
 
-  // Skip if already converted
   if (isConverted(row)) {
     return row;
   }
 
-  // Create a shallow copy to avoid mutating the original
-  const converted = { ...row } as T;
-
-  // Convert boolean fields
-  for (const key of Object.keys(converted)) {
-    const value = converted[key];
-    
-    // Only convert fields that look like booleans and have 0/1 values
-    if (isBooleanFieldName(key) && isSqliteBoolean(value)) {
-      (converted as Record<string, unknown>)[key] = convertSqliteBoolean(value);
-    }
-  }
-
-  // Mark as converted and return
-  return markAsConverted(converted);
+  // PostgreSQL returns native booleans, no conversion needed
+  // Just mark as converted to prevent multiple processing
+  return markAsConverted({ ...row } as T);
 }
 
 /**
  * Convert an array of database rows
  * 
  * @param rows - Array of raw database rows
- * @returns Array with boolean fields converted
+ * @returns Array (unchanged for PostgreSQL)
  */
 export function convertBooleanFieldsArray<T extends RawDatabaseRow>(rows: T[]): T[] {
   return rows.map(row => convertBooleanFields(row) as T);
@@ -121,14 +89,13 @@ export function isIsoDateString(value: unknown): value is string {
   if (typeof value !== 'string') {
     return false;
   }
-  // Match ISO 8601 format: YYYY-MM-DDTHH:mm:ss.sssZ or YYYY-MM-DD
   return /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{3})?Z?)?$/.test(value);
 }
 
 /**
- * Convert a Date object to ISO string for SQLite storage
+ * Convert a Date object to ISO string for PostgreSQL storage
  */
-export function toSqliteDate(date: Date | string | null | undefined): string | null {
+export function toPostgresDate(date: Date | string | null | undefined): string | null {
   if (date === null || date === undefined) {
     return null;
   }
@@ -138,11 +105,9 @@ export function toSqliteDate(date: Date | string | null | undefined): string | n
   }
   
   if (typeof date === 'string') {
-    // Already a string, validate and return
     if (isIsoDateString(date)) {
       return date;
     }
-    // Try to parse and convert
     const parsed = new Date(date);
     if (!isNaN(parsed.getTime())) {
       return parsed.toISOString();
@@ -153,16 +118,12 @@ export function toSqliteDate(date: Date | string | null | undefined): string | n
 }
 
 /**
- * Convert a value for SQLite storage
- * Handles booleans, dates, and other types
+ * Convert a value for PostgreSQL storage
+ * Handles dates and other types
  */
-export function toSqliteValue(value: unknown): unknown {
+export function toPostgresValue(value: unknown): unknown {
   if (value === null || value === undefined) {
     return null;
-  }
-  
-  if (typeof value === 'boolean') {
-    return toSqliteBoolean(value);
   }
   
   if (value instanceof Date) {
@@ -173,16 +134,16 @@ export function toSqliteValue(value: unknown): unknown {
 }
 
 /**
- * Convert an object's values for SQLite storage
+ * Convert an object's values for PostgreSQL storage
  * 
  * @param data - Object with values to convert
- * @returns Object with values converted for SQLite
+ * @returns Object with values converted for PostgreSQL
  */
-export function convertToSqliteValues<T extends Record<string, unknown>>(data: T): T {
+export function convertToPostgresValues<T extends Record<string, unknown>>(data: T): T {
   const converted = { ...data } as T;
   
   for (const key of Object.keys(converted)) {
-    (converted as Record<string, unknown>)[key] = toSqliteValue(converted[key]);
+    (converted as Record<string, unknown>)[key] = toPostgresValue(converted[key]);
   }
   
   return converted;
@@ -190,13 +151,13 @@ export function convertToSqliteValues<T extends Record<string, unknown>>(data: T
 
 /**
  * Prepare data for INSERT/UPDATE operations
- * Converts booleans and dates to SQLite-compatible values
+ * Converts dates to PostgreSQL-compatible values
  * 
  * @param data - Data object to prepare
  * @param excludeFields - Fields to exclude from conversion
  * @returns Prepared data object
  */
-export function prepareDataForSqlite<T extends Record<string, unknown>>(
+export function prepareDataForPostgres<T extends Record<string, unknown>>(
   data: T,
   excludeFields: string[] = ['id']
 ): { fields: string[]; values: unknown[] } {
@@ -209,8 +170,17 @@ export function prepareDataForSqlite<T extends Record<string, unknown>>(
     }
     
     fields.push(key);
-    values.push(toSqliteValue(value));
+    values.push(toPostgresValue(value));
   }
   
   return { fields, values };
 }
+
+// Backward compatibility aliases
+export const toSqliteDate = toPostgresDate;
+export const toSqliteValue = toPostgresValue;
+export const toSqliteBoolean = (value: boolean): boolean => value;
+export const convertSqliteBoolean = (value: boolean): boolean => value;
+export const isSqliteBoolean = (value: unknown): value is boolean => typeof value === 'boolean';
+export const convertToSqliteValues = convertToPostgresValues;
+export const prepareDataForSqlite = prepareDataForPostgres;
