@@ -1,4 +1,4 @@
-import { Telegraf, Context } from 'telegraf';
+import { Telegraf, Context, Markup } from 'telegraf';
 import dbClient from '../utils/db';
 import axios from 'axios';
 import { 
@@ -788,6 +788,316 @@ async function completeRegistration(ctx: MyContext): Promise<void> {
   }
 }
 
+/**
+ * Handle settings toggle from inline keyboard
+ */
+async function handleSettingsToggle(ctx: any, settingKey: string): Promise<void> {
+  try {
+    if (!ctx.from) {
+      await ctx.answerCbQuery('❌ Ошибка');
+      return;
+    }
+
+    const telegramId = String(ctx.from.id);
+    const user = await dbClient.user.findFirst({
+      where: { telegramId: telegramId },
+    }) as { id: string } | null;
+
+    if (!user) {
+      await ctx.answerCbQuery('❌ Пользователь не найден');
+      return;
+    }
+
+    // Get current settings
+    let settings = await dbClient.notificationSettings.findUnique({
+      where: { userId: user.id },
+    });
+
+    if (!settings) {
+      settings = await dbClient.notificationSettings.create({
+        data: {
+          userId: user.id,
+          enablePushNotifications: true,
+          enableTaskNotifications: true,
+          enableShiftNotifications: true,
+          enableSwapNotifications: true,
+          enableTimesheetNotifications: true,
+          enableInAppNotifications: true,
+        },
+      });
+    }
+
+    // Toggle the setting
+    const currentValue = (settings as any)[settingKey];
+    const newValue = !currentValue;
+
+    await dbClient.notificationSettings.update({
+      where: { userId: user.id },
+      data: { [settingKey]: newValue },
+    });
+
+    // Update the message with new settings
+    const updatedSettings = await dbClient.notificationSettings.findUnique({
+      where: { userId: user.id },
+    });
+
+    if (!updatedSettings) {
+      await ctx.answerCbQuery('❌ Ошибка обновления');
+      return;
+    }
+
+    const getStatusIcon = (enabled: boolean) => enabled ? '✅' : '❌';
+
+    let message = '⚙️ <b>Настройки уведомлений:</b>\n\n';
+    message += `${getStatusIcon(updatedSettings.enablePushNotifications)} Push-уведомления\n`;
+    message += `${getStatusIcon(updatedSettings.enableShiftNotifications)} Уведомления о сменах\n`;
+    message += `${getStatusIcon(updatedSettings.enableSwapNotifications)} Уведомления об обменах\n`;
+    message += `${getStatusIcon(updatedSettings.enableTaskNotifications)} Уведомления о задачах\n`;
+    message += `${getStatusIcon(updatedSettings.enableTimesheetNotifications)} Уведомления о табелях\n`;
+    message += '\n';
+    message += '💡 Для изменения настроек используйте кнопки ниже:';
+
+    // Create updated inline keyboard
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback(
+          `${updatedSettings.enableShiftNotifications ? '🔔' : '🔕'} Смены`, 
+          'settings_toggle_shift'
+        ),
+        Markup.button.callback(
+          `${updatedSettings.enableSwapNotifications ? '🔔' : '🔕'} Обмены`, 
+          'settings_toggle_swap'
+        ),
+      ],
+      [
+        Markup.button.callback(
+          `${updatedSettings.enableTaskNotifications ? '🔔' : '🔕'} Задачи`, 
+          'settings_toggle_task'
+        ),
+        Markup.button.callback(
+          `${updatedSettings.enablePushNotifications ? '🔔' : '🔕'} Push`, 
+          'settings_toggle_push'
+        ),
+      ],
+    ]);
+
+    await ctx.editMessageText(message, { parse_mode: 'HTML', ...keyboard });
+    
+    const settingNames: Record<string, string> = {
+      enableShiftNotifications: 'Смены',
+      enableSwapNotifications: 'Обмены',
+      enableTaskNotifications: 'Задачи',
+      enablePushNotifications: 'Push',
+    };
+    
+    await ctx.answerCbQuery(`${newValue ? '🔔' : '🔕'} ${settingNames[settingKey] || settingKey}: ${newValue ? 'вкл' : 'выкл'}`);
+  } catch (error) {
+    logger.error('Error toggling settings', { 
+      error: error instanceof Error ? error.message : 'Unknown error' 
+    });
+    await ctx.answerCbQuery('❌ Ошибка при обновлении настроек');
+  }
+}
+
+/**
+ * Handle swap request response from inline keyboard (accept/reject)
+ * Requirements: 14.1, 14.2
+ * 
+ * @param ctx - Telegram callback query context
+ * @param accept - true to accept, false to reject
+ */
+async function handleSwapResponse(ctx: any, accept: boolean): Promise<void> {
+  try {
+    if (!ctx.from) {
+      await ctx.answerCbQuery('❌ Ошибка');
+      return;
+    }
+
+    // Extract swap request ID from callback data
+    const callbackData = ctx.callbackQuery?.data || '';
+    const match = callbackData.match(/swap_(accept|reject)_(.+)/);
+    
+    if (!match) {
+      await ctx.answerCbQuery('❌ Неверный формат запроса');
+      return;
+    }
+
+    const swapRequestId = match[2];
+    const telegramId = String(ctx.from.id);
+
+    // Find user by Telegram ID
+    const user = await dbClient.user.findFirst({
+      where: { telegramId: telegramId },
+    }) as { id: string; firstName: string; lastName: string } | null;
+
+    if (!user) {
+      await ctx.answerCbQuery('❌ Пользователь не найден');
+      return;
+    }
+
+    // Get the swap request
+    const swapRequest = await dbClient.swapRequest.findUnique({
+      where: { id: swapRequestId },
+      include: {
+        shift: {
+          include: {
+            restaurant: true,
+          },
+        },
+        fromUser: {
+          select: { id: true, firstName: true, lastName: true, telegramId: true },
+        },
+        toUser: {
+          select: { id: true, firstName: true, lastName: true, telegramId: true },
+        },
+      },
+    });
+
+    if (!swapRequest) {
+      await ctx.answerCbQuery('❌ Запрос не найден');
+      // Update message to show request not found
+      await ctx.editMessageText(
+        '❌ <b>Запрос не найден</b>\n\n' +
+        'Этот запрос на обмен сменой больше не существует.',
+        { parse_mode: 'HTML' }
+      );
+      return;
+    }
+
+    // Verify the request is addressed to the current user
+    if (swapRequest.toUserId !== user.id) {
+      await ctx.answerCbQuery('❌ Этот запрос адресован не вам');
+      return;
+    }
+
+    // Verify the request is in PENDING status
+    if (swapRequest.status !== 'PENDING') {
+      const statusMessages: Record<string, string> = {
+        'ACCEPTED': 'уже принят',
+        'REJECTED': 'уже отклонен',
+        'APPROVED': 'уже одобрен менеджером',
+        'MANAGER_REJECTED': 'отклонен менеджером',
+        'EXPIRED': 'истек',
+      };
+      const statusText = statusMessages[swapRequest.status] || swapRequest.status;
+      
+      await ctx.answerCbQuery(`❌ Запрос ${statusText}`);
+      
+      // Update message to show current status
+      const fromUserName = swapRequest.fromUser 
+        ? `${swapRequest.fromUser.firstName} ${swapRequest.fromUser.lastName}`
+        : 'Коллега';
+      
+      await ctx.editMessageText(
+        `ℹ️ <b>Запрос на обмен сменой</b>\n\n` +
+        `От: ${fromUserName}\n` +
+        `Статус: ${statusText}`,
+        { parse_mode: 'HTML' }
+      );
+      return;
+    }
+
+    // Update the swap request status
+    const newStatus = accept ? 'ACCEPTED' : 'REJECTED';
+    
+    await dbClient.swapRequest.update({
+      where: { id: swapRequestId },
+      data: {
+        status: newStatus,
+        respondedAt: new Date(),
+      },
+    });
+
+    logger.info('Swap request responded via Telegram', { 
+      swapRequestId, 
+      userId: user.id,
+      accepted: accept 
+    });
+
+    // Format shift details for the message
+    const shiftDate = swapRequest.shift 
+      ? new Date(swapRequest.shift.startTime) 
+      : null;
+    const dateStr = shiftDate 
+      ? shiftDate.toLocaleDateString('ru-RU', { 
+          weekday: 'short', 
+          day: 'numeric', 
+          month: 'short' 
+        })
+      : '';
+    const startTimeStr = shiftDate 
+      ? shiftDate.toLocaleTimeString('ru-RU', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        })
+      : '';
+    const endTimeStr = swapRequest.shift 
+      ? new Date(swapRequest.shift.endTime).toLocaleTimeString('ru-RU', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        })
+      : '';
+    
+    const fromUserName = swapRequest.fromUser 
+      ? `${swapRequest.fromUser.firstName} ${swapRequest.fromUser.lastName}`
+      : 'Коллега';
+
+    // Update the message to show the result
+    if (accept) {
+      await ctx.answerCbQuery('✅ Запрос принят');
+      await ctx.editMessageText(
+        `✅ <b>Запрос на обмен принят</b>\n\n` +
+        `Вы приняли запрос от ${fromUserName}.\n` +
+        (dateStr ? `📆 ${dateStr}\n` : '') +
+        (startTimeStr ? `🕐 ${startTimeStr} - ${endTimeStr}\n` : '') +
+        `\nОжидается одобрение менеджера.`,
+        { parse_mode: 'HTML' }
+      );
+    } else {
+      await ctx.answerCbQuery('❌ Запрос отклонен');
+      await ctx.editMessageText(
+        `❌ <b>Запрос на обмен отклонен</b>\n\n` +
+        `Вы отклонили запрос от ${fromUserName}.\n` +
+        (dateStr ? `📆 ${dateStr}\n` : '') +
+        (startTimeStr ? `🕐 ${startTimeStr} - ${endTimeStr}` : ''),
+        { parse_mode: 'HTML' }
+      );
+    }
+
+    // Send notification to the requester
+    if (swapRequest.fromUser?.telegramId) {
+      const toUserName = `${user.firstName} ${user.lastName}`;
+      const notificationMessage = accept
+        ? `✅ <b>Обмен сменой принят</b>\n\n` +
+          `${toUserName} принял ваш запрос на обмен сменой.\n` +
+          (dateStr ? `📆 ${dateStr}\n` : '') +
+          `\nОжидается одобрение менеджера.`
+        : `❌ <b>Обмен сменой отклонен</b>\n\n` +
+          `${toUserName} отклонил ваш запрос на обмен сменой.\n` +
+          (dateStr ? `📆 ${dateStr}` : '');
+      
+      try {
+        await bot!.telegram.sendMessage(
+          swapRequest.fromUser.telegramId,
+          notificationMessage,
+          { parse_mode: 'HTML' }
+        );
+      } catch (notifyError) {
+        logger.error('Failed to notify requester about swap response', {
+          fromUserId: swapRequest.fromUserId,
+          error: notifyError instanceof Error ? notifyError.message : 'Unknown error',
+        });
+      }
+    }
+
+  } catch (error) {
+    logger.error('Error handling swap response', { 
+      error: error instanceof Error ? error.message : 'Unknown error' 
+    });
+    await ctx.answerCbQuery('❌ Ошибка при обработке запроса');
+  }
+}
+
 
 /**
  * Start the Telegram bot
@@ -977,9 +1287,474 @@ export async function startBot(): Promise<void> {
       '/start [токен] - Начать работу или зарегистрироваться\n' +
       '/menu - Главное меню\n' +
       '/schedule - Мой график работы\n' +
+      '/today - Смены на сегодня\n' +
+      '/week - Смены на неделю\n' +
+      '/swaps - Активные запросы обмена\n' +
+      '/tasks - Мои задачи\n' +
+      '/settings - Настройки уведомлений\n' +
       '/help - Эта справка\n\n' +
       'Для получения пригласительной ссылки обратитесь к менеджеру.'
     );
+  });
+
+  // /today command - Show shifts for today (Requirement: 17.1)
+  bot.command('today', async (ctx: MyContext) => {
+    if (!ctx.from) {
+      await ctx.reply('❌ Ошибка: не удалось определить пользователя');
+      return;
+    }
+
+    const telegramId = ctx.telegramUserId;
+    const user = await (dbClient.user.findFirst as any)({
+      where: { telegramId: telegramId },
+    }) as { id: string; firstName: string; lastName: string } | null;
+
+    if (!user) {
+      await ctx.reply('❌ Вы не зарегистрированы. Используйте пригласительную ссылку для регистрации.');
+      return;
+    }
+
+    // Get today's date range
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+
+    const shifts = await dbClient.shift.findMany({
+      where: {
+        userId: user.id,
+        startTime: {
+          gte: todayStart.toISOString(),
+          lt: todayEnd.toISOString(),
+        },
+      },
+      orderBy: { startTime: 'asc' },
+      include: {
+        restaurant: true,
+      },
+    });
+
+    if (shifts.length === 0) {
+      await ctx.reply('📅 У вас нет смен на сегодня. Отдыхайте! 🎉');
+      return;
+    }
+
+    // Get shift templates for display names
+    const shiftTemplates = await dbClient.shiftTemplate.findMany({});
+    const templateMap = new Map(shiftTemplates.map((t: any) => [t.id, t.name]));
+
+    let message = '📅 <b>Ваши смены на сегодня:</b>\n\n';
+
+    for (const shift of shifts) {
+      const startDate = new Date(shift.startTime);
+      const endDate = new Date(shift.endTime);
+      
+      const startTimeStr = startDate.toLocaleTimeString('ru-RU', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+      const endTimeStr = endDate.toLocaleTimeString('ru-RU', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+
+      const statusIcon = shift.isConfirmed ? '✅' : '⏳';
+      const restaurantName = shift.restaurant?.name || 'Неизвестный ресторан';
+      const shiftTypeName = templateMap.get(shift.type) || shift.type;
+
+      message += `${statusIcon} 🕐 ${startTimeStr} - ${endTimeStr}\n`;
+      message += `   🏢 ${restaurantName}\n`;
+      if (shiftTypeName && shiftTypeName !== shift.type) {
+        message += `   📋 ${shiftTypeName}\n`;
+      }
+      message += '\n';
+    }
+
+    await ctx.reply(message, { parse_mode: 'HTML' });
+  });
+
+  // /week command - Show shifts for the week (Requirement: 17.2)
+  bot.command('week', async (ctx: MyContext) => {
+    if (!ctx.from) {
+      await ctx.reply('❌ Ошибка: не удалось определить пользователя');
+      return;
+    }
+
+    const telegramId = ctx.telegramUserId;
+    const user = await (dbClient.user.findFirst as any)({
+      where: { telegramId: telegramId },
+    }) as { id: string; firstName: string; lastName: string } | null;
+
+    if (!user) {
+      await ctx.reply('❌ Вы не зарегистрированы. Используйте пригласительную ссылку для регистрации.');
+      return;
+    }
+
+    // Get week date range (next 7 days)
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekEnd = new Date(todayStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const shifts = await dbClient.shift.findMany({
+      where: {
+        userId: user.id,
+        startTime: {
+          gte: todayStart.toISOString(),
+          lt: weekEnd.toISOString(),
+        },
+      },
+      orderBy: { startTime: 'asc' },
+      include: {
+        restaurant: true,
+      },
+    });
+
+    if (shifts.length === 0) {
+      await ctx.reply('📅 У вас нет запланированных смен на ближайшие 7 дней.');
+      return;
+    }
+
+    // Get shift templates for display names
+    const shiftTemplates = await dbClient.shiftTemplate.findMany({});
+    const templateMap = new Map(shiftTemplates.map((t: any) => [t.id, t.name]));
+
+    let message = '📅 <b>Ваш график на неделю:</b>\n\n';
+
+    // Group shifts by date
+    const shiftsByDate = new Map<string, typeof shifts>();
+    for (const shift of shifts) {
+      const dateKey = new Date(shift.startTime).toDateString();
+      if (!shiftsByDate.has(dateKey)) {
+        shiftsByDate.set(dateKey, []);
+      }
+      shiftsByDate.get(dateKey)!.push(shift);
+    }
+
+    for (const [dateKey, dayShifts] of shiftsByDate) {
+      const date = new Date(dateKey);
+      const dateStr = date.toLocaleDateString('ru-RU', { 
+        weekday: 'short', 
+        day: 'numeric', 
+        month: 'short' 
+      });
+      
+      message += `📆 <b>${dateStr}</b>\n`;
+
+      for (const shift of dayShifts) {
+        const startDate = new Date(shift.startTime);
+        const endDate = new Date(shift.endTime);
+        
+        const startTimeStr = startDate.toLocaleTimeString('ru-RU', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        });
+        const endTimeStr = endDate.toLocaleTimeString('ru-RU', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        });
+
+        const statusIcon = shift.isConfirmed ? '✅' : '⏳';
+        const restaurantName = shift.restaurant?.name || 'Неизвестный ресторан';
+        const shiftTypeName = templateMap.get(shift.type) || shift.type;
+
+        message += `   ${statusIcon} ${startTimeStr} - ${endTimeStr}`;
+        if (shiftTypeName && shiftTypeName !== shift.type) {
+          message += ` (${shiftTypeName})`;
+        }
+        message += `\n   🏢 ${restaurantName}\n`;
+      }
+      message += '\n';
+    }
+
+    await ctx.reply(message, { parse_mode: 'HTML' });
+  });
+
+  // /swaps command - Show active swap requests (Requirement: 17.3)
+  bot.command('swaps', async (ctx: MyContext) => {
+    if (!ctx.from) {
+      await ctx.reply('❌ Ошибка: не удалось определить пользователя');
+      return;
+    }
+
+    const telegramId = ctx.telegramUserId;
+    const user = await (dbClient.user.findFirst as any)({
+      where: { telegramId: telegramId },
+    }) as { id: string; firstName: string; lastName: string } | null;
+
+    if (!user) {
+      await ctx.reply('❌ Вы не зарегистрированы. Используйте пригласительную ссылку для регистрации.');
+      return;
+    }
+
+    // Get active swap requests (PENDING or ACCEPTED)
+    const swapRequests = await dbClient.swapRequest.findMany({
+      where: {
+        OR: [
+          { fromUserId: user.id },
+          { toUserId: user.id },
+        ],
+        status: {
+          in: ['PENDING', 'ACCEPTED'],
+        },
+      },
+      orderBy: { requestedAt: 'desc' },
+      include: {
+        shift: {
+          include: {
+            restaurant: true,
+          },
+        },
+        fromUser: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+        toUser: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+      },
+    });
+
+    if (swapRequests.length === 0) {
+      await ctx.reply('🔄 У вас нет активных запросов на обмен сменами.');
+      return;
+    }
+
+    let message = '🔄 <b>Активные запросы на обмен:</b>\n\n';
+
+    // Separate incoming and outgoing requests
+    const incoming = swapRequests.filter((sr: any) => sr.toUserId === user.id && sr.status === 'PENDING');
+    const outgoing = swapRequests.filter((sr: any) => sr.fromUserId === user.id);
+
+    if (incoming.length > 0) {
+      message += '📥 <b>Входящие запросы:</b>\n';
+      for (const swap of incoming) {
+        const fromName = `${(swap as any).fromUser?.firstName || ''} ${(swap as any).fromUser?.lastName || ''}`.trim() || 'Неизвестный';
+        const shiftDate = (swap as any).shift ? new Date((swap as any).shift.startTime) : null;
+        const dateStr = shiftDate ? shiftDate.toLocaleDateString('ru-RU', { 
+          weekday: 'short', 
+          day: 'numeric', 
+          month: 'short' 
+        }) : 'Неизвестная дата';
+        const startTimeStr = shiftDate ? shiftDate.toLocaleTimeString('ru-RU', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        }) : '';
+
+        message += `   👤 От: ${fromName}\n`;
+        message += `   📆 ${dateStr}`;
+        if (startTimeStr) message += ` в ${startTimeStr}`;
+        message += '\n   ⏳ Ожидает вашего ответа\n\n';
+      }
+    }
+
+    if (outgoing.length > 0) {
+      message += '📤 <b>Исходящие запросы:</b>\n';
+      for (const swap of outgoing) {
+        const toName = `${(swap as any).toUser?.firstName || ''} ${(swap as any).toUser?.lastName || ''}`.trim() || 'Неизвестный';
+        const shiftDate = (swap as any).shift ? new Date((swap as any).shift.startTime) : null;
+        const dateStr = shiftDate ? shiftDate.toLocaleDateString('ru-RU', { 
+          weekday: 'short', 
+          day: 'numeric', 
+          month: 'short' 
+        }) : 'Неизвестная дата';
+
+        const statusText = swap.status === 'PENDING' 
+          ? '⏳ Ожидает ответа' 
+          : '✅ Принят, ожидает одобрения менеджера';
+
+        message += `   👤 Кому: ${toName}\n`;
+        message += `   📆 ${dateStr}\n`;
+        message += `   ${statusText}\n\n`;
+      }
+    }
+
+    await ctx.reply(message, { parse_mode: 'HTML' });
+  });
+
+  // /tasks command - Show my tasks (Requirement: 15.3)
+  bot.command('tasks', async (ctx: MyContext) => {
+    if (!ctx.from) {
+      await ctx.reply('❌ Ошибка: не удалось определить пользователя');
+      return;
+    }
+
+    const telegramId = ctx.telegramUserId;
+    const user = await (dbClient.user.findFirst as any)({
+      where: { telegramId: telegramId },
+    }) as { id: string; firstName: string; lastName: string } | null;
+
+    if (!user) {
+      await ctx.reply('❌ Вы не зарегистрированы. Используйте пригласительную ссылку для регистрации.');
+      return;
+    }
+
+    // Get active tasks assigned to user
+    const tasks = await dbClient.task.findMany({
+      where: {
+        assignedToId: user.id,
+        status: {
+          in: ['NEW', 'IN_PROGRESS'],
+        },
+      },
+      orderBy: [
+        { dueDate: 'asc' },
+        { createdAt: 'desc' },
+      ],
+      include: {
+        restaurant: true,
+      },
+    });
+
+    if (tasks.length === 0) {
+      await ctx.reply('📋 У вас нет активных задач. Отличная работа! 🎉');
+      return;
+    }
+
+    let message = '📋 <b>Ваши задачи:</b>\n\n';
+
+    for (const task of tasks) {
+      const statusIcon = task.status === 'NEW' ? '🆕' : '🔄';
+      const restaurantName = (task as any).restaurant?.name || '';
+      
+      message += `${statusIcon} <b>${task.title}</b>\n`;
+      if (task.description) {
+        // Truncate long descriptions
+        const desc = task.description.length > 100 
+          ? task.description.substring(0, 100) + '...' 
+          : task.description;
+        message += `   ${desc}\n`;
+      }
+      if (task.dueDate) {
+        const dueDate = new Date(task.dueDate);
+        const now = new Date();
+        const isOverdue = dueDate < now;
+        const dueDateStr = dueDate.toLocaleDateString('ru-RU', { 
+          day: 'numeric', 
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        const overdueIcon = isOverdue ? '⚠️ ' : '';
+        message += `   ${overdueIcon}📅 Срок: ${dueDateStr}\n`;
+      }
+      if (restaurantName) {
+        message += `   🏢 ${restaurantName}\n`;
+      }
+      message += `   📊 Статус: ${task.status === 'NEW' ? 'Новая' : 'В работе'}\n`;
+      message += '\n';
+    }
+
+    await ctx.reply(message, { parse_mode: 'HTML' });
+  });
+
+  // /settings command - Notification settings (Requirement: 17.4)
+  bot.command('settings', async (ctx: MyContext) => {
+    if (!ctx.from) {
+      await ctx.reply('❌ Ошибка: не удалось определить пользователя');
+      return;
+    }
+
+    const telegramId = ctx.telegramUserId;
+    const user = await (dbClient.user.findFirst as any)({
+      where: { telegramId: telegramId },
+    }) as { id: string; firstName: string; lastName: string } | null;
+
+    if (!user) {
+      await ctx.reply('❌ Вы не зарегистрированы. Используйте пригласительную ссылку для регистрации.');
+      return;
+    }
+
+    // Get or create notification settings
+    let settings = await dbClient.notificationSettings.findUnique({
+      where: { userId: user.id },
+    });
+
+    if (!settings) {
+      // Create default settings
+      settings = await dbClient.notificationSettings.create({
+        data: {
+          userId: user.id,
+          enablePushNotifications: true,
+          enableTaskNotifications: true,
+          enableShiftNotifications: true,
+          enableSwapNotifications: true,
+          enableTimesheetNotifications: true,
+          enableInAppNotifications: true,
+        },
+      });
+    }
+
+    const getStatusIcon = (enabled: boolean) => enabled ? '✅' : '❌';
+
+    let message = '⚙️ <b>Настройки уведомлений:</b>\n\n';
+    message += `${getStatusIcon(settings.enablePushNotifications)} Push-уведомления\n`;
+    message += `${getStatusIcon(settings.enableShiftNotifications)} Уведомления о сменах\n`;
+    message += `${getStatusIcon(settings.enableSwapNotifications)} Уведомления об обменах\n`;
+    message += `${getStatusIcon(settings.enableTaskNotifications)} Уведомления о задачах\n`;
+    message += `${getStatusIcon(settings.enableTimesheetNotifications)} Уведомления о табелях\n`;
+    message += '\n';
+    message += '💡 Для изменения настроек используйте кнопки ниже:';
+
+    // Create inline keyboard for toggling settings
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback(
+          `${settings.enableShiftNotifications ? '🔔' : '🔕'} Смены`, 
+          'settings_toggle_shift'
+        ),
+        Markup.button.callback(
+          `${settings.enableSwapNotifications ? '🔔' : '🔕'} Обмены`, 
+          'settings_toggle_swap'
+        ),
+      ],
+      [
+        Markup.button.callback(
+          `${settings.enableTaskNotifications ? '🔔' : '🔕'} Задачи`, 
+          'settings_toggle_task'
+        ),
+        Markup.button.callback(
+          `${settings.enablePushNotifications ? '🔔' : '🔕'} Push`, 
+          'settings_toggle_push'
+        ),
+      ],
+    ]);
+
+    await ctx.reply(message, { parse_mode: 'HTML', ...keyboard });
+  });
+
+  // Settings toggle handlers
+  bot.action('settings_toggle_shift', async (ctx) => {
+    await handleSettingsToggle(ctx, 'enableShiftNotifications');
+  });
+
+  bot.action('settings_toggle_swap', async (ctx) => {
+    await handleSettingsToggle(ctx, 'enableSwapNotifications');
+  });
+
+  bot.action('settings_toggle_task', async (ctx) => {
+    await handleSettingsToggle(ctx, 'enableTaskNotifications');
+  });
+
+  bot.action('settings_toggle_push', async (ctx) => {
+    await handleSettingsToggle(ctx, 'enablePushNotifications');
+  });
+
+  // ============================================
+  // Swap Request Callback Handlers (Requirements: 14.1, 14.2)
+  // ============================================
+
+  /**
+   * Handle swap accept callback from inline keyboard
+   * Requirement: 14.2
+   */
+  bot.action(/swap_accept_(.+)/, async (ctx) => {
+    await handleSwapResponse(ctx, true);
+  });
+
+  /**
+   * Handle swap reject callback from inline keyboard
+   * Requirement: 14.2
+   */
+  bot.action(/swap_reject_(.+)/, async (ctx) => {
+    await handleSwapResponse(ctx, false);
   });
 
   bot.on('text', async (ctx: MyContext) => {

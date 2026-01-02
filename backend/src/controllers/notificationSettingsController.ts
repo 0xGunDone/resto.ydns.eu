@@ -44,6 +44,8 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       enableSwapNotifications,
       enableTimesheetNotifications,
       enableInAppNotifications,
+      enableReminders,
+      reminderHoursBefore,
     } = req.body;
 
     // Проверяем существование настроек
@@ -62,6 +64,8 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
           enableSwapNotifications: enableSwapNotifications !== undefined ? enableSwapNotifications : true,
           enableTimesheetNotifications: enableTimesheetNotifications !== undefined ? enableTimesheetNotifications : true,
           enableInAppNotifications: enableInAppNotifications !== undefined ? enableInAppNotifications : true,
+          enableReminders: enableReminders !== undefined ? enableReminders : true,
+          reminderHoursBefore: reminderHoursBefore !== undefined ? reminderHoursBefore : 12,
         },
       });
     } else {
@@ -73,6 +77,8 @@ export const updateSettings = async (req: AuthRequest, res: Response, next: Next
       if (enableSwapNotifications !== undefined) updateData.enableSwapNotifications = enableSwapNotifications;
       if (enableTimesheetNotifications !== undefined) updateData.enableTimesheetNotifications = enableTimesheetNotifications;
       if (enableInAppNotifications !== undefined) updateData.enableInAppNotifications = enableInAppNotifications;
+      if (enableReminders !== undefined) updateData.enableReminders = enableReminders;
+      if (reminderHoursBefore !== undefined) updateData.reminderHoursBefore = reminderHoursBefore;
 
       settings = await dbClient.notificationSettings.update({
         where: { userId: req.user.id },

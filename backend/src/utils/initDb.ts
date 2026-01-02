@@ -107,6 +107,26 @@ export async function initDatabase() {
       
       logger.info('SwapRequest table created');
     }
+
+    // Add enableReminders and reminderHoursBefore columns to NotificationSettings if they don't exist
+    try {
+      const tableInfo = db.prepare(`PRAGMA table_info("NotificationSettings")`).all() as { name: string }[];
+      const columnNames = tableInfo.map(col => col.name);
+      
+      if (!columnNames.includes('enableReminders')) {
+        logger.info('Adding enableReminders column to NotificationSettings...');
+        db.exec(`ALTER TABLE "NotificationSettings" ADD COLUMN "enableReminders" BOOLEAN NOT NULL DEFAULT true`);
+        logger.info('enableReminders column added');
+      }
+      
+      if (!columnNames.includes('reminderHoursBefore')) {
+        logger.info('Adding reminderHoursBefore column to NotificationSettings...');
+        db.exec(`ALTER TABLE "NotificationSettings" ADD COLUMN "reminderHoursBefore" INTEGER NOT NULL DEFAULT 12`);
+        logger.info('reminderHoursBefore column added');
+      }
+    } catch (error: any) {
+      logger.warn('Error adding new columns to NotificationSettings', { error: error.message });
+    }
     
     return;
   }
@@ -595,6 +615,8 @@ export async function initDatabase() {
       "enableSwapNotifications" BOOLEAN NOT NULL DEFAULT true,
       "enableTimesheetNotifications" BOOLEAN NOT NULL DEFAULT true,
       "enableInAppNotifications" BOOLEAN NOT NULL DEFAULT true,
+      "enableReminders" BOOLEAN NOT NULL DEFAULT true,
+      "reminderHoursBefore" INTEGER NOT NULL DEFAULT 12,
       "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT "NotificationSettings_userId_key" UNIQUE ("userId"),

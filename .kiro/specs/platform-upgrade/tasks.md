@@ -150,72 +150,72 @@
     - Кнопки одобрить/отклонить
     - _Requirements: 3.1_
 
-- [-] 11. Checkpoint - Frontend обмена сменами
+- [x] 11. Checkpoint - Frontend обмена сменами
   - Протестировать полный flow в браузере
 
 ---
 
 ### ЧАСТЬ 4: Telegram уведомления
 
-- [ ] 12. Расширить NotificationService
-  - [ ] 12.1 Добавить методы для уведомлений о сменах
+- [x] 12. Расширить NotificationService
+  - [x] 12.1 Добавить методы для уведомлений о сменах
     - notifyShiftAssigned
     - notifyShiftChanged
     - notifyShiftReminder
     - _Requirements: 13.1, 13.2, 13.3, 13.4_
 
-  - [ ] 12.2 Написать property test для уведомлений о сменах
+  - [x] 12.2 Написать property test для уведомлений о сменах
     - **Property 12: Shift assignment triggers notification**
     - **Validates: Requirements 13.1**
 
-  - [ ] 12.3 Добавить методы для уведомлений об обменах
+  - [x] 12.3 Добавить методы для уведомлений об обменах
     - notifySwapRequested (с кнопками)
     - notifySwapResponded
     - notifySwapApproved
     - _Requirements: 14.1, 14.2, 14.3_
 
-  - [ ] 12.4 Написать property test для уведомлений об обменах
+  - [x] 12.4 Написать property test для уведомлений об обменах
     - **Property 13: Swap request triggers interactive notification**
     - **Validates: Requirements 14.1**
 
-- [ ] 13. Новые команды бота
-  - [ ] 13.1 Реализовать /today
+- [x] 13. Новые команды бота
+  - [x] 13.1 Реализовать /today
     - Показать смены на сегодня
     - _Requirements: 17.1_
 
-  - [ ] 13.2 Реализовать /week
+  - [x] 13.2 Реализовать /week
     - Показать смены на неделю
     - _Requirements: 17.2_
 
-  - [ ] 13.3 Реализовать /swaps
+  - [x] 13.3 Реализовать /swaps
     - Показать активные запросы обмена
     - _Requirements: 17.3_
 
-  - [ ] 13.4 Реализовать /tasks
+  - [x] 13.4 Реализовать /tasks
     - Показать мои задачи
     - _Requirements: 15.3_
 
-  - [ ] 13.5 Реализовать /settings
+  - [x] 13.5 Реализовать /settings
     - Настройки уведомлений
     - _Requirements: 17.4_
 
-- [ ] 14. Callback handlers для кнопок
-  - [ ] 14.1 Обработчик swap_accept
+- [x] 14. Callback handlers для кнопок
+  - [x] 14.1 Обработчик swap_accept
     - Принять запрос обмена
     - _Requirements: 14.2_
 
-  - [ ] 14.2 Обработчик swap_reject
+  - [x] 14.2 Обработчик swap_reject
     - Отклонить запрос обмена
     - _Requirements: 14.2_
 
-- [ ] 15. Настройки уведомлений
-  - [ ] 15.1 Расширить NotificationSettings
+- [x] 15. Настройки уведомлений
+  - [x] 15.1 Расширить NotificationSettings
     - enableSwapNotifications
     - enableReminders
     - reminderHoursBefore
     - _Requirements: 16.1, 16.2, 16.3, 16.4_
 
-  - [ ] 15.2 Написать property test для настроек
+  - [x] 15.2 Написать property test для настроек
     - **Property 14: Notification settings are respected**
     - **Validates: Requirements 16.1, 16.2, 16.3**
 
