@@ -219,8 +219,8 @@
     - **Property 14: Notification settings are respected**
     - **Validates: Requirements 16.1, 16.2, 16.3**
 
-- [ ] 16. Scheduler для напоминаний
-  - [ ] 16.1 Создать job для напоминаний о сменах
+- [x] 16. Scheduler для напоминаний
+  - [x] 16.1 Создать job для напоминаний о сменах
     - Проверять смены на ближайшие 12/2 часа
     - Отправлять напоминания
     - _Requirements: 13.3, 13.4_

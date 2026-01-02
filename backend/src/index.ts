@@ -119,6 +119,7 @@ app.use(errorHandler);
 import { startBot } from './telegram/bot';
 import { getTelegramSessionService } from './services/telegramSessionService';
 import { getSwapExpirationService } from './services/swapExpirationService';
+import { getShiftReminderService } from './services/shiftReminderService';
 
 app.listen(PORT, async () => {
   logger.info(`Server running on http://localhost:${PORT}`);
@@ -127,6 +128,11 @@ app.listen(PORT, async () => {
   // Requirements: 2.5 - Automatically expire swap requests after 48 hours
   const swapExpirationService = getSwapExpirationService();
   swapExpirationService.startExpirationScheduler();
+  
+  // Start shift reminder scheduler
+  // Requirements: 13.3, 13.4 - Send shift reminders at 12 hours and 2 hours before
+  const shiftReminderService = getShiftReminderService();
+  shiftReminderService.startReminderScheduler();
   
   // Запускаем Telegram бота
   // Requirements: 3.1 - Load sessions from persistent storage at startup
